@@ -1,0 +1,8 @@
+{
+    "name": "DataCenter Assistant",
+    "content_in_root": false,
+    "domain": "datacenter_assistant",
+    "integration_type": "integration",
+    "country": "de"
+  }
+  
