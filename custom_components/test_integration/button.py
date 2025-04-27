@@ -1,7 +1,6 @@
 from homeassistant.components.button import ButtonEntity
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Set up the custom button platform."""
+async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities([ExampleButton()])
 
 class ExampleButton(ButtonEntity):
@@ -13,4 +12,4 @@ class ExampleButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        print("Der Button wurde gedrückt!")
+        print("Der Button wurde gedrückt!!")
