@@ -1,9 +1,0 @@
-{
-  "domain": "test_integration",
-  "name": "Test Integration",
-  "version": "1.0.1",
-  "documentation": "Later",
-  "requirements": [],
-  "dependencies": [],
-  "codeowners": []
-}
