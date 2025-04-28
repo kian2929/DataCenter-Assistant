@@ -1,5 +1,4 @@
 import logging
-import requests
 from datetime import timedelta
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import STATE_UNKNOWN
