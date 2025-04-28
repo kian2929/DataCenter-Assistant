@@ -12,9 +12,8 @@ PLATFORMS = ["sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
-    # Initialize hass.data[DOMAIN] if it doesn't exist
     hass.data.setdefault(DOMAIN, {})
-    # You can store entry-specific data here if needed, e.g., hass.data[DOMAIN][entry.entry_id] = {}
+    hass.data[DOMAIN][entry.entry_id] = entry
 
     hass.components.persistent_notification.create(
         f"DataCenter Assistant wurde über die UI konfiguriert!",
@@ -22,8 +21,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     _LOGGER.info("DataCenter Assistant setup_entry wurde erfolgreich aufgerufen.")
 
-    # Forward the setup to the sensor platform and await its completion
-    await hass.config_entries.async_forward_entry_setup(entry, "sensor")
+    for platform in PLATFORMS:
+        await hass.config_entries.async_forward_entry_setup(entry, platform)
+
+    async def reboot_vm_service(call):
+        """Handle reboot_vm service call."""
+        from .sensor import ProxmoxStatusSensor
+
+        # Find the entity in hass.data
+        entity = hass.data[DOMAIN].get(entry.entry_id)
+        if isinstance(entity, ProxmoxStatusSensor):
+            await entity.reboot_vm()
+            _LOGGER.info("Reboot command sent to VM.")
+        else:
+            _LOGGER.error("No valid ProxmoxStatusSensor found to reboot.")
+
+    # Register the reboot service
+    hass.services.async_register(
+        DOMAIN,
+        "reboot_vm",
+        reboot_vm_service,
+    )
 
     return True
 

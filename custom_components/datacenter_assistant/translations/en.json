@@ -1,0 +1,19 @@
+{
+  "config": {
+    "flow_title": "DataCenter Assistant",
+    "step": {
+      "user": {
+        "title": "Setup DataCenter Assistant",
+        "description": "Enter your server connection details.",
+        "data": {
+          "ip_address": "IP Address",
+          "port": "Port",
+          "api_token_id": "API Token ID",
+          "api_token_secret": "API Token Secret",
+          "node": "Node Name",
+          "vmid": "VM ID"
+        }
+      }
+    }
+  }
+}
