@@ -38,32 +38,32 @@ class ProxmoxStatusSensor(SensorEntity):
         else:
             return "mdi:server"
 
-async def async_update(self):
-    """Fetch new state data for the sensor."""
-    ip_address = self._entry.data.get("ip_address")
-    port = self._entry.data.get("port")
-    api_token_id = self._entry.data.get("api_token_id")
-    api_token_secret = self._entry.data.get("api_token_secret")
+    async def async_update(self):
+        """Fetch new state data for the sensor."""
+        ip_address = self._entry.data.get("ip_address")
+        port = self._entry.data.get("port")
+        api_token_id = self._entry.data.get("api_token_id")
+        api_token_secret = self._entry.data.get("api_token_secret")
 
-    url = f"https://{ip_address}:{port}/api2/json/cluster/status"
-    headers = {
-        "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}"
-    }
+        url = f"https://{ip_address}:{port}/api2/json/cluster/status"
+        headers = {
+            "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}"
+        }
 
-    try:
-        session = aiohttp.ClientSession()
-        async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as response:
-            response.raise_for_status()
-            data = await response.json()
+        try:
+            session = aiohttp.ClientSession()
+            async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
 
-            logging.error("Proxmox API Response: %s", data)
+                logging.error("Proxmox API Response: %s", data)
 
-            node_info = data["data"][0]
-            node_online = node_info.get("online", 0)
+                node_info = data["data"][0]
+                node_online = node_info.get("online", 0)
 
-            self._state = "online" if node_online else "offline"
-            _LOGGER.info("Proxmox Node Status: %s", self._state)
+                self._state = "online" if node_online else "offline"
+                _LOGGER.info("Proxmox Node Status: %s", self._state)
 
-    except Exception as e:
-        _LOGGER.error("Fehler beim Abrufen des Proxmox Status: %s", e)
-        self._state = STATE_UNKNOWN
+        except Exception as e:
+            _LOGGER.error("Fehler beim Abrufen des Proxmox Status: %s", e)
+            self._state = STATE_UNKNOWN
