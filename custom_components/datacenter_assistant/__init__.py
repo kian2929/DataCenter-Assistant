@@ -10,8 +10,12 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "datacenter_assistant"
 PLATFORMS = ["sensor"]
 
-async def async_setup_entry(hass, entry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
+    # Initialize hass.data[DOMAIN] if it doesn't exist
+    hass.data.setdefault(DOMAIN, {})
+    # You can store entry-specific data here if needed, e.g., hass.data[DOMAIN][entry.entry_id] = {}
+
     hass.components.persistent_notification.create(
         f"DataCenter Assistant wurde über die UI konfiguriert!",
         title="DataCenter Assistant"
@@ -34,10 +38,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ]
         )
     )
-    
-    if unload_ok:
+
+    # Ensure domain and entry_id exist before popping
+    if unload_ok and DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
         hass.data[DOMAIN].pop(entry.entry_id)
-        
+        # Optionally remove the domain key if it's now empty
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
+
     return unload_ok
 
 async def async_setup(hass, config):
@@ -52,7 +60,7 @@ async def async_setup(hass, config):
         _LOGGER.info("Notification wurde gesendet.")
 
     # Deinen Notify-Service registrieren
-    hass.services.async_register("datacenter_assistant", "notify", handle_notify_service)
+    hass.services.async_register(DOMAIN, "notify", handle_notify_service)
 
     _LOGGER.info("DataCenter Assistant wurde erfolgreich geladen!")
     return True
