@@ -56,6 +56,8 @@ async def async_update(self):
             response.raise_for_status()
             data = await response.json()
 
+            logging.error("Proxmox API Response: %s", data)
+
             node_info = data["data"][0]
             node_online = node_info.get("online", 0)
 
