@@ -1,9 +1,10 @@
-import requests
 import logging
-import aiohttp
+import requests
 from datetime import timedelta
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import STATE_UNKNOWN
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -11,13 +12,14 @@ SCAN_INTERVAL = timedelta(seconds=60)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
-    async_add_entities([ProxmoxStatusSensor(entry)], True)
+    async_add_entities([ProxmoxStatusSensor(hass, entry)], True)
 
 class ProxmoxStatusSensor(SensorEntity):
     """Representation of a Proxmox Cluster Status Sensor."""
 
-    def __init__(self, entry):
+    def __init__(self, hass, entry):
         """Initialize the sensor."""
+        self.hass = hass
         self._entry = entry
         self._state = STATE_UNKNOWN
         self._attr_name = "Proxmox Cluster Status"
@@ -50,13 +52,14 @@ class ProxmoxStatusSensor(SensorEntity):
             "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}"
         }
 
+        session = async_get_clientsession(self.hass)
+
         try:
-            session = aiohttp.ClientSession()
             async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 response.raise_for_status()
                 data = await response.json()
 
-                logging.error("Proxmox API Response: %s", data)
+                _LOGGER.error("Proxmox API Response: %s", data)
 
                 node_info = data["data"][0]
                 node_online = node_info.get("online", 0)
