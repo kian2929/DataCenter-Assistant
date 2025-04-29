@@ -12,7 +12,12 @@ SCAN_INTERVAL = timedelta(seconds=60)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
-    async_add_entities([ProxmoxVMStatusSensor(hass, entry)], True)
+    sensor = ProxmoxVMStatusSensor(hass, entry)
+    async_add_entities([sensor], True)
+
+    # Save the sensor instance for the service call
+    hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
+    hass.data["datacenter_assistant_sensors"][entry.entry_id] = sensor
 
 class ProxmoxVMStatusSensor(SensorEntity):
     """Representation of a Proxmox VM Status Sensor."""

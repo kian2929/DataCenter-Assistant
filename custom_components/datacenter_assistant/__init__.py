@@ -5,6 +5,7 @@ import asyncio
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from .sensor import ProxmoxVMStatusSensor
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "datacenter_assistant"
@@ -26,15 +27,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def reboot_vm_service(call):
         """Handle reboot_vm service call."""
-        from .sensor import ProxmoxStatusSensor
-
-        # Find the entity in hass.data
-        entity = hass.data[DOMAIN].get(entry.entry_id)
-        if isinstance(entity, ProxmoxStatusSensor):
-            await entity.reboot_vm()
+        sensor = hass.data.get("datacenter_assistant_sensors", {}).get(entry.entry_id)
+        if isinstance(sensor, ProxmoxVMStatusSensor):
+            await sensor.reboot_vm()
             _LOGGER.info("Reboot command sent to VM.")
         else:
-            _LOGGER.error("No valid ProxmoxStatusSensor found to reboot.")
+            _LOGGER.error("No valid ProxmoxVMStatusSensor found to reboot.")
 
     # Register the reboot service
     hass.services.async_register(
