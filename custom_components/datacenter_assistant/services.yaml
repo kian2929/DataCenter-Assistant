@@ -1,0 +1,9 @@
+reboot_vm:
+  name: Reboot VM
+  description: Reboots the configured Proxmox VM.
+  fields: {}
+
+notify:
+  name: Notify
+  description: Sends a persistent notification from DataCenter Assistant.
+  fields: {}

@@ -46,10 +46,10 @@ class ProxmoxVMStatusSensor(SensorEntity):
         port = self._entry.data.get("port")
         api_token_id = self._entry.data.get("api_token_id")
         api_token_secret = self._entry.data.get("api_token_secret")
-        node_name = self._entry.data.get("node_name")
+        node = self._entry.data.get("node")
         vmid = self._entry.data.get("vmid")
 
-        url = f"https://{ip_address}:{port}/api2/json/nodes/{node_name}/qemu/{vmid}/status/current"
+        url = f"https://{ip_address}:{port}/api2/json/nodes/{node}/qemu/{vmid}/status/current"
         headers = {
             "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}"
         }
@@ -82,10 +82,15 @@ class ProxmoxVMStatusSensor(SensorEntity):
         port = self._entry.data.get("port")
         api_token_id = self._entry.data.get("api_token_id")
         api_token_secret = self._entry.data.get("api_token_secret")
-        node_name = self._entry.data.get("node_name")
+        node = self._entry.data.get("node")
         vmid = self._entry.data.get("vmid")
 
-        url = f"https://{ip_address}:{port}/api2/json/nodes/{node_name}/qemu/{vmid}/status/reboot"
+        if not node or vmid is None:
+            _LOGGER.error("Missing node or vmid in config entry: node=%s, vmid=%s", node, vmid)
+            self._state = STATE_UNKNOWN
+            return
+
+        url = f"https://{ip_address}:{port}/api2/json/nodes/{node}/qemu/{vmid}/status/reboot"
         headers = {
             "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}",
             "Content-Type": "application/x-www-form-urlencoded",
