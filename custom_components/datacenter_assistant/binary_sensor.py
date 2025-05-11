@@ -14,4 +14,4 @@ class VCFUpgradeBinarySensor(BinarySensorEntity):
     @property
     def is_on(self):
         """Return True if any upgrades are available."""
-        return any(b["status"] == "AVAILABLE" for b in self.coordinator.data["upgradable_data"]["elements"])
+        return any(b["status"] == "AVAILABLE" for b in self.coordinator.data.get("elements", []))
