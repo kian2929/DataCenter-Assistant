@@ -7,3 +7,8 @@ notify:
   name: Notify
   description: Sends a persistent notification from DataCenter Assistant.
   fields: {}
+
+trigger_upgrade:
+  name: Trigger Upgrade
+  description: Sendet einen Upgrade-Befehl an die VCF Lifecycle API.
+  fields: {}
