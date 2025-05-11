@@ -25,5 +25,7 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required("api_token_secret"): str,
                 vol.Required("node"): str,
                 vol.Required("vmid"): int,
+                vol.Required("vcf_url"): str,
+                vol.Required("vcf_token"): str,
             })
         )
