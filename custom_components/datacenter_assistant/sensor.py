@@ -16,7 +16,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     sensor = ProxmoxVMStatusSensor(hass, entry)
 
     # Optional: Upgrade-Daten von neuem Coordinator laden
-    coordinator = get_coordinator(hass)
+    #test
+    coordinator = get_coordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
     # Zusätzliche VCF-Sensoren hinzufügen
