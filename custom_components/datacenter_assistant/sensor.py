@@ -6,6 +6,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import aiohttp
 from aiohttp import ClientError
 import asyncio
+from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
@@ -13,11 +14,21 @@ SCAN_INTERVAL = timedelta(seconds=60)
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
     sensor = ProxmoxVMStatusSensor(hass, entry)
-    async_add_entities([sensor], True)
 
-    # Save the sensor instance for the service call
+    # Optional: Upgrade-Daten von neuem Coordinator laden
+    coordinator = get_coordinator(hass)
+    await coordinator.async_config_entry_first_refresh()
+
+    # Zusätzliche VCF-Sensoren hinzufügen
+    upgrade_status_sensor = VCFUpgradeStatusSensor(coordinator)
+    upgrade_graph_sensor = VCFUpgradeGraphSensor(coordinator)
+
+    async_add_entities([sensor, upgrade_status_sensor, upgrade_graph_sensor], True)
+
+    # Save the Proxmox sensor for reboot
     hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
     hass.data["datacenter_assistant_sensors"][entry.entry_id] = sensor
+
 
 class ProxmoxVMStatusSensor(SensorEntity):
     """Representation of a Proxmox VM Status Sensor."""
@@ -112,3 +123,48 @@ class ProxmoxVMStatusSensor(SensorEntity):
             _LOGGER.error("Connection error while rebooting VM: %s", e)
         except Exception as e:
             _LOGGER.exception("Unexpected error while rebooting VM: %s", e)
+
+
+class VCFUpgradeStatusSensor(SensorEntity):
+    def __init__(self, coordinator):
+        self.coordinator = coordinator
+
+    @property
+    def name(self):
+        return "VCF Upgrade Status"
+
+    @property
+    def state(self):
+        upgrades = [b for b in self.coordinator.data["elements"] if b["status"] == "AVAILABLE"]
+        return "upgrades_available" if upgrades else "up_to_date"
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data["elements"]
+        return {
+            "available_count": len([x for x in data if x["status"] == "AVAILABLE"]),
+            "pending_count": len([x for x in data if x["status"] == "PENDING"]),
+            "scheduled_count": len([x for x in data if x["status"] == "SCHEDULED"])
+        }
+
+
+class VCFUpgradeGraphSensor(SensorEntity):
+    def __init__(self, coordinator):
+        self.coordinator = coordinator
+
+    @property
+    def name(self):
+        return "VCF Upgrade Distribution"
+
+    @property
+    def state(self):
+        return "ok"
+
+    @property
+    def extra_state_attributes(self):
+        status_counts = {}
+        for item in self.coordinator.data["elements"]:
+            status = item["status"]
+            status_counts[status] = status_counts.get(status, 0) + 1
+        return status_counts
+

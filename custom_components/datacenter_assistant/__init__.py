@@ -5,7 +5,12 @@ import asyncio
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from .sensor import async_setup_entry as setup_sensor
+from .binary_sensor import async_setup_entry as setup_binary_sensor
+from .button import async_setup_entry as setup_button
 from .sensor import ProxmoxVMStatusSensor
+from .coordinator import get_coordinator
+
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "datacenter_assistant"
@@ -16,17 +21,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry
 
+    # Set up sensors (Proxmox + VCF)
+    await setup_sensor(hass, entry, async_add_entities=None)
+
+    # Optional: weitere Komponenten einrichten, wenn vorhanden
+    try:
+        await setup_binary_sensor(hass, entry, async_add_entities=None)
+    except Exception:
+        _LOGGER.debug("No binary_sensor.py loaded or setup failed – skipping.")
+
+    try:
+        await setup_button(hass, entry, async_add_entities=None)
+    except Exception:
+        _LOGGER.debug("No button.py loaded or setup failed – skipping.")
+
     hass.components.persistent_notification.create(
         f"DataCenter Assistant wurde über die UI konfiguriert!",
         title="DataCenter Assistant"
     )
     _LOGGER.info("DataCenter Assistant setup_entry wurde erfolgreich aufgerufen.")
 
-    for platform in PLATFORMS:
-        await hass.config_entries.async_forward_entry_setup(entry, platform)
-
+    # Optional: reboot service
     async def reboot_vm_service(call):
-        """Handle reboot_vm service call."""
         sensor = hass.data.get("datacenter_assistant_sensors", {}).get(entry.entry_id)
         if isinstance(sensor, ProxmoxVMStatusSensor):
             await sensor.reboot_vm()
@@ -34,14 +50,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else:
             _LOGGER.error("No valid ProxmoxVMStatusSensor found to reboot.")
 
-    # Register the reboot service
-    hass.services.async_register(
-        DOMAIN,
-        "reboot_vm",
-        reboot_vm_service,
-    )
+    hass.services.async_register(DOMAIN, "reboot_vm", reboot_vm_service)
 
     return True
+
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
