@@ -6,12 +6,12 @@ class VCFUpgradeBinarySensor(BinarySensorEntity):
     def __init__(self, coordinator):
         """Initialize the binary sensor."""
         self.coordinator = coordinator
+        self._attr_name = "VCF Upgrades Available"
+        self._attr_unique_id = "vcf_upgrades_available"
 
-    @property
-    def name(self):
-        return "VCF Upgrades Available"
-
+    #test
     @property
     def is_on(self):
         """Return True if any upgrades are available."""
-        return any(b["status"] == "AVAILABLE" for b in self.coordinator.data.get("elements", []))
+        upgrades = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
+        return any(up["status"] == "AVAILABLE" for up in upgrades)
