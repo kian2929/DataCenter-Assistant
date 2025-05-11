@@ -135,12 +135,12 @@ class VCFUpgradeStatusSensor(SensorEntity):
 
     @property
     def state(self):
-        upgrades = [b for b in self.coordinator.data["elements"] if b["status"] == "AVAILABLE"]
+        upgrades = [b for b in self.coordinator.data["upgradable_data"]["elements"] if b["status"] == "AVAILABLE"]
         return "upgrades_available" if upgrades else "up_to_date"
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data["elements"]
+        data = self.coordinator.data["upgradable_data"]["elements"]
         return {
             "available_count": len([x for x in data if x["status"] == "AVAILABLE"]),
             "pending_count": len([x for x in data if x["status"] == "PENDING"]),
@@ -163,7 +163,7 @@ class VCFUpgradeGraphSensor(SensorEntity):
     @property
     def extra_state_attributes(self):
         status_counts = {}
-        for item in self.coordinator.data["elements"]:
+        for item in self.coordinator.data["upgradable_data"]["elements"]:
             status = item["status"]
             status_counts[status] = status_counts.get(status, 0) + 1
         return status_counts
