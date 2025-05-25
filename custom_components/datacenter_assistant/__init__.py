@@ -3,26 +3,34 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from .sensor import async_setup_entry as setup_sensor
-from .coordinator import get_coordinator
+from homeassistant.components.persistent_notification import async_create
+
 from .sensor import ProxmoxVMStatusSensor
+from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "datacenter_assistant"
 PLATFORMS = ["sensor", "binary_sensor"]
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry
 
-    # Set up sensors
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor"])
+    # Forward to sensor and binary_sensor platforms
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception as e:
+        _LOGGER.exception("Platform forwarding failed: %s", e)
+        return False
 
-    # Optional: binary_sensor or button can be added similarly
-
-    from homeassistant.components.persistent_notification import async_create
-    await async_create(hass, "DataCenter Assistant wurde über die UI konfiguriert!", title="DataCenter Assistant")
+    # Notification (fix für NoneType-Fehler)
+    await async_create(
+        hass,
+        "DataCenter Assistant wurde über die UI konfiguriert!",
+        title="DataCenter Assistant"
+    )
 
     _LOGGER.info("DataCenter Assistant setup_entry wurde erfolgreich aufgerufen.")
 
@@ -37,11 +45,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.services.async_register(DOMAIN, "reboot_vm", reboot_vm_service)
 
-    # Trigger VCF Upgrade Service
+    # Trigger VCF Upgrade Service (mit Platzhalterwarnung)
     async def trigger_upgrade_service(call):
-        url = "https://vcf.example.local/api/v1/lifecycle/upgrade"
+        url = ""  # Achtung: muss durch echte IP/URL ersetzt werden!
         headers = {
-            "Authorization": "Bearer DEIN_TOKEN",
+            "Authorization": "Bearer DEIN_TOKEN",  # TODO: Token dynamisch machen?
             "Content-Type": "application/json"
         }
         session = async_get_clientsession(hass)
@@ -52,13 +60,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as e:
             _LOGGER.error("VCF Upgrade fehlgeschlagen: %s", e)
 
-    hass.services.async_register(
-        DOMAIN,
-        "trigger_upgrade",
-        trigger_upgrade_service
-    )
+    hass.services.async_register(DOMAIN, "trigger_upgrade", trigger_upgrade_service)
 
     return True
+
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
@@ -78,10 +83,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     return unload_ok
 
+
 async def async_setup(hass, config):
     """Set up the DataCenter Assistant component."""
+
     async def handle_notify_service(call):
-        hass.components.persistent_notification.create(
+        await async_create(
+            hass,
             "Dies ist eine Notification von DataCenter Assistant!",
             title="DataCenter Assistant"
         )

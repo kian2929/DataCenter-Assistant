@@ -32,7 +32,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     upgrade_graph_sensor = VCFUpgradeGraphSensor(coordinator)
 
     # Sensoren korrekt registrieren
-    async_add_entities([sensor, upgrade_status_sensor, upgrade_graph_sensor], True)
+    if async_add_entities is not None:
+        async_add_entities([sensor, upgrade_status_sensor, upgrade_graph_sensor], True)
 
     # Merkt sich den Proxmox-Sensor für späteres Reboot
     hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
@@ -176,4 +177,3 @@ class VCFUpgradeGraphSensor(SensorEntity):
             status = item["status"]
             status_counts[status] = status_counts.get(status, 0) + 1
         return status_counts
-    
