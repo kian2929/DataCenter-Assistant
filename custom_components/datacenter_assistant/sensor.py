@@ -6,27 +6,35 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import aiohttp
 from aiohttp import ClientError
 import asyncio
+from homeassistant.exceptions import ConfigEntryNotReady  # NEU
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
 
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
+
+    # Erstellt Sensor für Proxmox VM
     sensor = ProxmoxVMStatusSensor(hass, entry)
 
-    # Optional: Upgrade-Daten von neuem Coordinator laden
-    #test
+    # Versucht den Coordinator zu initialisieren
     coordinator = get_coordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
 
-    # Zusätzliche VCF-Sensoren hinzufügen
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as err:
+        raise ConfigEntryNotReady from err  # Verhindert Absturz bei fehlender Verbindung
+
+    # Erstellt die VCF-Sensoren mit dem geladenen Coordinator
     upgrade_status_sensor = VCFUpgradeStatusSensor(coordinator)
     upgrade_graph_sensor = VCFUpgradeGraphSensor(coordinator)
 
+    # Sensoren korrekt registrieren
     async_add_entities([sensor, upgrade_status_sensor, upgrade_graph_sensor], True)
 
-    # Save the Proxmox sensor for reboot
+    # Merkt sich den Proxmox-Sensor für späteres Reboot
     hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
     hass.data["datacenter_assistant_sensors"][entry.entry_id] = sensor
 
@@ -168,4 +176,4 @@ class VCFUpgradeGraphSensor(SensorEntity):
             status = item["status"]
             status_counts[status] = status_counts.get(status, 0) + 1
         return status_counts
-
+    

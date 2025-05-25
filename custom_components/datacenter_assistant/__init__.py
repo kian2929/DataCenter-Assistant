@@ -17,14 +17,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = entry
 
     # Set up sensors
-    await hass.config_entries.async_forward_entry_setup(entry, "sensor")
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor"])
 
     # Optional: binary_sensor or button can be added similarly
 
-    hass.components.persistent_notification.create(
-        f"DataCenter Assistant wurde über die UI konfiguriert!",
-        title="DataCenter Assistant"
-    )
+    from homeassistant.components.persistent_notification import async_create
+    await async_create(hass, "DataCenter Assistant wurde über die UI konfiguriert!", title="DataCenter Assistant")
+
     _LOGGER.info("DataCenter Assistant setup_entry wurde erfolgreich aufgerufen.")
 
     # Reboot VM Service
