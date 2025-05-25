@@ -12,46 +12,47 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "datacenter_assistant"
 PLATFORMS = ["sensor", "binary_sensor"]
 
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry
 
-    # Forward to sensor and binary_sensor platforms
+    # Sensor- und Binary-Sensor-Plattformen laden
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception as e:
-        _LOGGER.exception("Platform forwarding failed: %s", e)
+        _LOGGER.exception("Plattform-Setup fehlgeschlagen: %s", e)
         return False
 
-    # Notification (fix für NoneType-Fehler)
+    # Benutzerbenachrichtigung nach erfolgreichem Setup
     await async_create(
         hass,
         "DataCenter Assistant wurde über die UI konfiguriert!",
         title="DataCenter Assistant"
     )
 
-    _LOGGER.info("DataCenter Assistant setup_entry wurde erfolgreich aufgerufen.")
+    _LOGGER.info("DataCenter Assistant setup_entry wurde erfolgreich ausgeführt.")
 
-    # Reboot VM Service
+    # VM reboot service
     async def reboot_vm_service(call):
         sensor = hass.data.get("datacenter_assistant_sensors", {}).get(entry.entry_id)
         if isinstance(sensor, ProxmoxVMStatusSensor):
             await sensor.reboot_vm()
             _LOGGER.info("Reboot command sent to VM.")
         else:
-            _LOGGER.error("No valid ProxmoxVMStatusSensor found to reboot.")
+            _LOGGER.warning("Kein gültiger Proxmox-Sensor gefunden.")
 
     hass.services.async_register(DOMAIN, "reboot_vm", reboot_vm_service)
 
-    # Trigger VCF Upgrade Service (mit Platzhalterwarnung)
+    # VCF-Upgrade-Service (nur aktiv, wenn gültige Daten vorhanden)
     async def trigger_upgrade_service(call):
-        url = ""  # Achtung: muss durch echte IP/URL ersetzt werden!
+        url = entry.data.get("vcf_url") + "/api/v1/lifecycle/upgrade"
+        token = entry.data.get("vcf_token")
         headers = {
-            "Authorization": "Bearer DEIN_TOKEN",  # TODO: Token dynamisch machen?
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+
         session = async_get_clientsession(hass)
         try:
             async with session.post(url, headers=headers, ssl=False, timeout=10) as resp:
@@ -86,7 +87,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_setup(hass, config):
     """Set up the DataCenter Assistant component."""
-
     async def handle_notify_service(call):
         await async_create(
             hass,
@@ -97,5 +97,5 @@ async def async_setup(hass, config):
 
     hass.services.async_register(DOMAIN, "notify", handle_notify_service)
 
-    _LOGGER.info("DataCenter Assistant wurde erfolgreich geladen!")
+    _LOGGER.info("DataCenter Assistant wurde erfolgreich geladen.")
     return True
