@@ -6,31 +6,35 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import aiohttp
 from aiohttp import ClientError
 import asyncio
-from homeassistant.exceptions import ConfigEntryNotReady
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up sensor platform for both Proxmox and VCF."""
+    """Setup sensor platform."""
+    sensor = ProxmoxVMStatusSensor(hass, entry)
+    entities = [sensor]
+
+    # Save the sensor instance for reboot
+    hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
+    hass.data["datacenter_assistant_sensors"][entry.entry_id] = sensor
+
+    # Optional: Add VCF sensors if they can be initialized
     try:
         coordinator = get_coordinator(hass, entry)
         await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        raise ConfigEntryNotReady from err
 
-    proxmox_sensor = ProxmoxVMStatusSensor(hass, entry)
-    upgrade_status_sensor = VCFUpgradeStatusSensor(coordinator)
-    upgrade_graph_sensor = VCFUpgradeGraphSensor(coordinator)
+        entities.append(VCFUpgradeStatusSensor(coordinator))
+        entities.append(VCFUpgradeGraphSensor(coordinator))
+    except Exception as e:
+        _LOGGER.warning("VCF part could not be initialized: %s", e)
 
-    async_add_entities([proxmox_sensor, upgrade_status_sensor, upgrade_graph_sensor], True)
-
-    hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
-    hass.data["datacenter_assistant_sensors"][entry.entry_id] = proxmox_sensor
-
+    async_add_entities(entities, True)
 
 class ProxmoxVMStatusSensor(SensorEntity):
+    """Representation of a Proxmox VM Status Sensor."""
+
     def __init__(self, hass, entry):
         self.hass = hass
         self._entry = entry
@@ -48,27 +52,37 @@ class ProxmoxVMStatusSensor(SensorEntity):
             return "mdi:server-network"
         elif self._state == "stopped":
             return "mdi:server-network-off"
-        return "mdi:server"
+        else:
+            return "mdi:server"
 
     async def async_update(self):
-        ip = self._entry.data.get("ip_address")
+        ip_address = self._entry.data.get("ip_address")
         port = self._entry.data.get("port")
-        token_id = self._entry.data.get("api_token_id")
-        token_secret = self._entry.data.get("api_token_secret")
+        api_token_id = self._entry.data.get("api_token_id")
+        api_token_secret = self._entry.data.get("api_token_secret")
         node = self._entry.data.get("node")
         vmid = self._entry.data.get("vmid")
 
-        url = f"https://{ip}:{port}/api2/json/nodes/{node}/qemu/{vmid}/status/current"
+        url = f"https://{ip_address}:{port}/api2/json/nodes/{node}/qemu/{vmid}/status/current"
         headers = {
-            "Authorization": f"PVEAPIToken={token_id}={token_secret}"
+            "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}"
         }
 
         session = async_get_clientsession(self.hass)
+
         try:
-            async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                r.raise_for_status()
-                data = await r.json()
-                self._state = data["data"].get("status", STATE_UNKNOWN)
+            async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
+
+                status = data["data"].get("status", None)
+                if status:
+                    self._state = status
+                    _LOGGER.info("Proxmox VM Status: %s", self._state)
+                else:
+                    self._state = STATE_UNKNOWN
+                    _LOGGER.warning("Proxmox API returned no status.")
+
         except (ClientError, asyncio.TimeoutError) as e:
             _LOGGER.error("Connection error: %s", e)
             self._state = STATE_UNKNOWN
@@ -77,30 +91,34 @@ class ProxmoxVMStatusSensor(SensorEntity):
             self._state = STATE_UNKNOWN
 
     async def reboot_vm(self):
-        ip = self._entry.data.get("ip_address")
+        ip_address = self._entry.data.get("ip_address")
         port = self._entry.data.get("port")
-        token_id = self._entry.data.get("api_token_id")
-        token_secret = self._entry.data.get("api_token_secret")
+        api_token_id = self._entry.data.get("api_token_id")
+        api_token_secret = self._entry.data.get("api_token_secret")
         node = self._entry.data.get("node")
         vmid = self._entry.data.get("vmid")
 
         if not node or vmid is None:
-            _LOGGER.error("Missing node or vmid.")
+            _LOGGER.error("Missing node or vmid in config entry: node=%s, vmid=%s", node, vmid)
+            self._state = STATE_UNKNOWN
             return
 
-        url = f"https://{ip}:{port}/api2/json/nodes/{node}/qemu/{vmid}/status/reboot"
+        url = f"https://{ip_address}:{port}/api2/json/nodes/{node}/qemu/{vmid}/status/reboot"
         headers = {
-            "Authorization": f"PVEAPIToken={token_id}={token_secret}",
+            "Authorization": f"PVEAPIToken={api_token_id}={api_token_secret}",
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
         session = async_get_clientsession(self.hass)
+
         try:
-            async with session.post(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                r.raise_for_status()
-                _LOGGER.info("Reboot command sent to VM %s", vmid)
+            async with session.post(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                _LOGGER.info("Successfully sent reboot command to VM %s", vmid)
+        except (ClientError, asyncio.TimeoutError) as e:
+            _LOGGER.error("Connection error while rebooting VM: %s", e)
         except Exception as e:
-            _LOGGER.error("Reboot error: %s", e)
+            _LOGGER.exception("Unexpected error while rebooting VM: %s", e)
 
 
 class VCFUpgradeStatusSensor(SensorEntity):
@@ -113,18 +131,17 @@ class VCFUpgradeStatusSensor(SensorEntity):
 
     @property
     def state(self):
-        upgrades = [b for b in self.coordinator.data["upgradable_data"]["elements"] if b["status"] == "AVAILABLE"]
+        upgrades = [b for b in self.coordinator.data.get("upgradable_data", {}).get("elements", []) if b.get("status") == "AVAILABLE"]
         return "upgrades_available" if upgrades else "up_to_date"
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data["upgradable_data"]["elements"]
+        data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
         return {
-            "available_count": len([x for x in data if x["status"] == "AVAILABLE"]),
-            "pending_count": len([x for x in data if x["status"] == "PENDING"]),
-            "scheduled_count": len([x for x in data if x["status"] == "SCHEDULED"])
+            "available_count": len([x for x in data if x.get("status") == "AVAILABLE"]),
+            "pending_count": len([x for x in data if x.get("status") == "PENDING"]),
+            "scheduled_count": len([x for x in data if x.get("status") == "SCHEDULED"])
         }
-
 
 class VCFUpgradeGraphSensor(SensorEntity):
     def __init__(self, coordinator):
@@ -140,8 +157,9 @@ class VCFUpgradeGraphSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        counts = {}
-        for item in self.coordinator.data["upgradable_data"]["elements"]:
-            status = item["status"]
-            counts[status] = counts.get(status, 0) + 1
-        return counts
+        status_counts = {}
+        for item in self.coordinator.data.get("upgradable_data", {}).get("elements", []):
+            status = item.get("status")
+            if status:
+                status_counts[status] = status_counts.get(status, 0) + 1
+        return status_counts
