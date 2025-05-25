@@ -17,7 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = entry
 
     # Set up sensors
-    await setup_sensor(hass, entry, async_add_entities=None)
+    await hass.config_entries.async_forward_entry_setup(entry, "sensor")
 
     # Optional: binary_sensor or button can be added similarly
 
