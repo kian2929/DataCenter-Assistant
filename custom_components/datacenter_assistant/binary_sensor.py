@@ -1,7 +1,20 @@
-from homeassistant.components.binary_sensor import BinarySensorEntity
 import logging
+from homeassistant.components.binary_sensor import BinarySensorEntity
+from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Set up binary sensors for VCF upgrade availability."""
+    try:
+        coordinator = get_coordinator(hass, config_entry)
+        await coordinator.async_config_entry_first_refresh()
+        entity = VCFUpgradeBinarySensor(coordinator)
+        async_add_entities([entity], True)
+    except Exception as e:
+        _LOGGER.warning("Could not set up VCF binary sensor: %s", e)
+
 
 class VCFUpgradeBinarySensor(BinarySensorEntity):
     """Binary sensor to indicate if a VCF upgrade is available."""
@@ -13,7 +26,6 @@ class VCFUpgradeBinarySensor(BinarySensorEntity):
 
     @property
     def is_on(self):
-        """Return true if at least one upgrade is available."""
         try:
             data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
             return any(b.get("status") == "AVAILABLE" for b in data)
@@ -23,7 +35,6 @@ class VCFUpgradeBinarySensor(BinarySensorEntity):
 
     @property
     def available(self):
-        """Return False if connection/data is invalid — sensor unavailable in HA."""
         try:
             data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
             return bool(data)
@@ -33,7 +44,6 @@ class VCFUpgradeBinarySensor(BinarySensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Additional details for troubleshooting."""
         try:
             data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
             return {
