@@ -30,6 +30,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
         entities.append(VCFUpgradeStatusSensor(coordinator))
         entities.append(VCFUpgradeGraphSensor(coordinator))
+        entities.append(VCFUpgradeComponentsSensor(coordinator))
+
     except Exception as e:
         _LOGGER.warning("VCF part could not be initialized: %s", e)
 
@@ -189,3 +191,28 @@ class VCFUpgradeGraphSensor(SensorEntity):
         except Exception as e:
             _LOGGER.warning("Error building VCF status distribution: %s", e)
             return {}
+        
+class VCFUpgradeComponentsSensor(SensorEntity):
+    def __init__(self, coordinator):
+        self.coordinator = coordinator
+        self._attr_name = "VCF Upgrade Components"
+        self._attr_unique_id = "vcf_upgrade_components"
+
+    @property
+    def state(self):
+        return "ok"
+
+    @property
+    def extra_state_attributes(self):
+        try:
+            components = {}
+            for item in self.coordinator.data.get("upgradable_data", {}).get("elements", []):
+                resource = item.get("resource", {})
+                fqdn = resource.get("fqdn", "unknown")
+                status = item.get("status", "unknown")
+                components[fqdn] = status
+            return {"components": components}
+        except Exception as e:
+            _LOGGER.warning("Error building VCF component list: %s", e)
+            return {"components": {}}
+

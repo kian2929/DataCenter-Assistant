@@ -18,17 +18,38 @@ def get_coordinator(hass, config_entry):
     async def async_fetch_upgrades():
         session = async_get_clientsession(hass)
 
+        # MOCKDATEN bei fehlender Konfiguration
         if not vcf_url or not vcf_token:
-            _LOGGER.warning("VCF not configured – using mock upgrade data.")
+            _LOGGER.warning("VCF not configured — using mock upgrade data.")
             return {
                 "upgradable_data": {
                     "elements": [
-                        {"status": "UNAVAILABLE"},
-                        {"status": "UNAVAILABLE"}
+                        {
+                            "status": "AVAILABLE",
+                            "resource": {
+                                "fqdn": "esxi01.lab.local",
+                                "type": "ESXI"
+                            }
+                        },
+                        {
+                            "status": "PENDING",
+                            "resource": {
+                                "fqdn": "esxi02.lab.local",
+                                "type": "ESXI"
+                            }
+                        },
+                        {
+                            "status": "SCHEDULED",
+                            "resource": {
+                                "fqdn": "nsx.lab.local",
+                                "type": "NSX_MANAGER"
+                            }
+                        }
                     ]
                 }
             }
 
+        # ECHTER API-ABRUF
         try:
             async with session.get(f"{vcf_url}/v1/system/upgradables", headers=headers, ssl=False) as resp:
                 resp.raise_for_status()
@@ -37,11 +58,17 @@ def get_coordinator(hass, config_entry):
                 }
         except Exception as e:
             _LOGGER.error(f"VCF Upgrade fetch failed: {e}")
-            # Fallback: Mockdaten
+            # Optionaler Fallback mit Mockdaten bei Fehler
             return {
                 "upgradable_data": {
                     "elements": [
-                        {"status": "UNAVAILABLE"}
+                        {
+                            "status": "UNAVAILABLE",
+                            "resource": {
+                                "fqdn": "mock.lab.local",
+                                "type": "UNKNOWN"
+                            }
+                        }
                     ]
                 }
             }
