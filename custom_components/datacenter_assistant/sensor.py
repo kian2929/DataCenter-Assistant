@@ -134,12 +134,20 @@ class VCFUpgradeStatusSensor(SensorEntity):
     @property
     def state(self):
         try:
-            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
-            if not data:
+            data = self.coordinator.data.get("upgradable_data", {}).get("elements", None)
+
+            # Kein Zugriff oder kein Feld "elements"
+            if data is None:
                 return "not_connected"
 
+            # Zugriff möglich, aber Liste ist leer
+            if isinstance(data, list) and len(data) == 0:
+                return "not_connected"
+
+            # Prüfen ob verfügbare Upgrades enthalten sind
             upgrades = [b for b in data if b.get("status") == "AVAILABLE"]
             return "upgrades_available" if upgrades else "up_to_date"
+
         except Exception as e:
             _LOGGER.warning("Error determining VCF upgrade status: %s", e)
             return "not_connected"
