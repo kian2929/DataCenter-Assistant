@@ -23,7 +23,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Optional: Add VCF sensors if they can be initialized
     try:
         coordinator = get_coordinator(hass, entry)
-        await coordinator.async_config_entry_first_refresh()
+        try:
+            await coordinator.async_config_entry_first_refresh()
+        except Exception as e:
+            _LOGGER.warning("VCF coordinator first refresh failed: %s", e)
 
         entities.append(VCFUpgradeStatusSensor(coordinator))
         entities.append(VCFUpgradeGraphSensor(coordinator))
@@ -31,6 +34,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         _LOGGER.warning("VCF part could not be initialized: %s", e)
 
     async_add_entities(entities, True)
+
 
 class ProxmoxVMStatusSensor(SensorEntity):
     """Representation of a Proxmox VM Status Sensor."""
@@ -124,32 +128,42 @@ class ProxmoxVMStatusSensor(SensorEntity):
 class VCFUpgradeStatusSensor(SensorEntity):
     def __init__(self, coordinator):
         self.coordinator = coordinator
-
-    @property
-    def name(self):
-        return "VCF Upgrade Status"
+        self._attr_name = "VCF Upgrade Status"
+        self._attr_unique_id = "vcf_upgrade_status"
 
     @property
     def state(self):
-        upgrades = [b for b in self.coordinator.data.get("upgradable_data", {}).get("elements", []) if b.get("status") == "AVAILABLE"]
-        return "upgrades_available" if upgrades else "up_to_date"
+        try:
+            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
+            if not data:
+                return "not_connected"
+
+            upgrades = [b for b in data if b.get("status") == "AVAILABLE"]
+            return "upgrades_available" if upgrades else "up_to_date"
+        except Exception as e:
+            _LOGGER.warning("Error determining VCF upgrade status: %s", e)
+            return "not_connected"
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
-        return {
-            "available_count": len([x for x in data if x.get("status") == "AVAILABLE"]),
-            "pending_count": len([x for x in data if x.get("status") == "PENDING"]),
-            "scheduled_count": len([x for x in data if x.get("status") == "SCHEDULED"])
-        }
+        try:
+            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
+            return {
+                "available_count": len([x for x in data if x.get("status") == "AVAILABLE"]),
+                "pending_count": len([x for x in data if x.get("status") == "PENDING"]),
+                "scheduled_count": len([x for x in data if x.get("status") == "SCHEDULED"]),
+                "raw_statuses": [x.get("status") for x in data],
+            }
+        except Exception as e:
+            _LOGGER.warning("Error extracting VCF attributes: %s", e)
+            return {}
+
 
 class VCFUpgradeGraphSensor(SensorEntity):
     def __init__(self, coordinator):
         self.coordinator = coordinator
-
-    @property
-    def name(self):
-        return "VCF Upgrade Distribution"
+        self._attr_name = "VCF Upgrade Distribution"
+        self._attr_unique_id = "vcf_upgrade_distribution"
 
     @property
     def state(self):
@@ -157,9 +171,13 @@ class VCFUpgradeGraphSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        status_counts = {}
-        for item in self.coordinator.data.get("upgradable_data", {}).get("elements", []):
-            status = item.get("status")
-            if status:
-                status_counts[status] = status_counts.get(status, 0) + 1
-        return status_counts
+        try:
+            status_counts = {}
+            for item in self.coordinator.data.get("upgradable_data", {}).get("elements", []):
+                status = item.get("status")
+                if status:
+                    status_counts[status] = status_counts.get(status, 0) + 1
+            return status_counts
+        except Exception as e:
+            _LOGGER.warning("Error building VCF status distribution: %s", e)
+            return {}
