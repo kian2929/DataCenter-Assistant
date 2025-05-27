@@ -3,6 +3,7 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from .sensor import async_setup_entry as setup_sensor
+from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,7 +13,11 @@ PLATFORMS = ["sensor"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = entry
+
+    # 👉 Добавляем создание и инициализацию координатора
+    coordinator = get_coordinator(hass, entry)
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN][entry.entry_id] = coordinator
 
     for platform in PLATFORMS:
         await hass.config_entries.async_forward_entry_setup(entry, platform)

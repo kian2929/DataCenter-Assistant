@@ -23,6 +23,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Optional: Add VCF sensors if they can be initialized
     try:
         coordinator = get_coordinator(hass, entry)
+        await coordinator.async_config_entry_first_refresh() # Ensure coordinator is ready
+        if not coordinator.data:
+            _LOGGER.error("No data received from coordinator")
+            return
         try:
             await coordinator.async_config_entry_first_refresh()
         except Exception as e:
