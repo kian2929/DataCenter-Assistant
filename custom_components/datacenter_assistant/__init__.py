@@ -14,9 +14,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # 👉 Добавляем создание и инициализацию координатора
+    _LOGGER.info("Initializing DataCenter Assistant integration for entry: %s", entry.entry_id)
+
+    # 👉 Создаём и инициализируем координатор
     coordinator = get_coordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
+
+    _LOGGER.debug("Coordinator first refresh completed: %s", coordinator.data)
+
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     for platform in PLATFORMS:
@@ -37,6 +42,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         reboot_vm_service,
     )
 
+    _LOGGER.info("Registered service 'reboot_vm' for DataCenter Assistant")
+
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -52,6 +59,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN)
+
+        _LOGGER.info("Unloaded DataCenter Assistant config entry: %s", entry.entry_id)
 
     return unload_ok
 

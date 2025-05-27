@@ -105,6 +105,7 @@ class VCFUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def _async_update_data(self):
+        _LOGGER.warning("VCFCoordinator: _async_update_data called")
         headers = {
             "Authorization": f"Bearer {self.vcf_token}",
             "Accept": "application/json",
@@ -150,10 +151,11 @@ class VCFUpdateCoordinator(DataUpdateCoordinator):
                     "upgradable_data": data
                 }
         except Exception as e:
-            _LOGGER.error(f"VCF Upgrade fetch failed: {e}")
+            _LOGGER.warning("Error determining VCF upgrade status: %s", e)
             raise UpdateFailed(f"Error fetching VCF data: {e}")
 
 
 def get_coordinator(hass, config_entry):
     coordinator = VCFUpdateCoordinator(hass, config_entry)
+    _LOGGER.warning(f"Got coordinator: {coordinator}")
     return coordinator
