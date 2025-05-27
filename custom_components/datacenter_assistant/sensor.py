@@ -141,7 +141,7 @@ class VCFUpgradeStatusSensor(SensorEntity):
     def state(self):
         try:
             data = self.coordinator.data.get("upgradable_data", {}).get("elements", None)
-
+            _LOGGER.debug("VCFUpgradeStatusSensor state data: %s", data)
             # Kein Zugriff oder kein Feld "elements"
             if data is None:
                 return "not_connected"
