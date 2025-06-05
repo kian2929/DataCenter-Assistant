@@ -13,7 +13,6 @@ SCAN_INTERVAL = timedelta(seconds=60)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
-    _LOGGER.info("Setting up DataCenter Assistant sensors for entry: %s", entry.entry_id)
     sensor = ProxmoxVMStatusSensor(hass, entry)
     entities = [sensor]
 
@@ -24,10 +23,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Optional: Add VCF sensors if they can be initialized
     try:
         coordinator = get_coordinator(hass, entry)
-        await coordinator.async_config_entry_first_refresh() # Ensure coordinator is ready
-        if not coordinator.data:
-            _LOGGER.error("No data received from coordinator")
-            return
         try:
             await coordinator.async_config_entry_first_refresh()
         except Exception as e:
@@ -67,7 +62,6 @@ class ProxmoxVMStatusSensor(SensorEntity):
             return "mdi:server"
 
     async def async_update(self):
-        _LOGGER.warning("VCFCoordinator: _async_update_data called")
         ip_address = self._entry.data.get("ip_address")
         port = self._entry.data.get("port")
         api_token_id = self._entry.data.get("api_token_id")
@@ -143,7 +137,7 @@ class VCFUpgradeStatusSensor(SensorEntity):
     def state(self):
         try:
             data = self.coordinator.data.get("upgradable_data", {}).get("elements", None)
-            _LOGGER.warning(f"VCFUpgradeStatusSensor: coordinator.data = {data}")
+
             # Kein Zugriff oder kein Feld "elements"
             if data is None:
                 return "not_connected"

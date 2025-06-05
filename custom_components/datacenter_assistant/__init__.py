@@ -3,7 +3,6 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from .sensor import async_setup_entry as setup_sensor
-from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -13,16 +12,7 @@ PLATFORMS = ["sensor"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-
-    _LOGGER.info("Initializing DataCenter Assistant integration for entry: %s", entry.entry_id)
-
-    # 👉 Создаём и инициализируем координатор
-    coordinator = get_coordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
-
-    _LOGGER.debug("Coordinator first refresh completed: %s", coordinator.data)
-
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    hass.data[DOMAIN][entry.entry_id] = entry
 
     for platform in PLATFORMS:
         await hass.config_entries.async_forward_entry_setup(entry, platform)
@@ -42,8 +32,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         reboot_vm_service,
     )
 
-    _LOGGER.info("Registered service 'reboot_vm' for DataCenter Assistant")
-
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -59,8 +47,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN)
-
-        _LOGGER.info("Unloaded DataCenter Assistant config entry: %s", entry.entry_id)
 
     return unload_ok
 
