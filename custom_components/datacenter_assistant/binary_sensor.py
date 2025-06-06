@@ -41,6 +41,8 @@ class VCFUpgradeBinarySensor(BinarySensorEntity):
         except Exception as e:
             _LOGGER.warning("VCF BinarySensor not available: %s", e)
             return False
+        
+        
 
     @property
     def extra_state_attributes(self):
