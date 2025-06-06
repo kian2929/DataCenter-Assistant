@@ -152,20 +152,29 @@ class VCFUpgradeStatusSensor(CoordinatorEntity, SensorEntity):
         try:
             # Prüfen, ob es eine erfolgreiche API-Antwort gab
             if self.coordinator.data is not None:
-                # Wir haben eine Antwort vom Coordinator bekommen
-                _LOGGER.critical(f"VCFUpgradeStatusSensor checking data: {self.coordinator.data}")
+                # Nur bei Bedarf detaillierter loggen
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(f"VCF data: {self.coordinator.data}")
                 
-                # Selbst wenn elements leer ist, sind wir verbunden!
-                # Das bedeutet: Keine Updates verfügbar = auch "connected"
+                # Wenn upgradable_data vorhanden ist, haben wir eine Verbindung
                 if "upgradable_data" in self.coordinator.data:
-                    # Eine leere Liste bedeutet "verbunden, aber keine Updates"
-                    return "connected"
-                
-            # Keine Daten oder Fehler bei der Anfrage
-            return "not_connected"
+                    data = self.coordinator.data.get("upgradable_data", {})
+                    elements = data.get("elements", [])
+                    
+                    # Nach verfügbaren Updates suchen
+                    for item in elements:
+                        if item.get("status") == "AVAILABLE":
+                            _LOGGER.info("VCF Updates sind verfügbar")
+                            return "upgrades_available"
+                    
+                    # Verbunden, aber keine Updates verfügbar
+                    return "up_to_date"
+            
+        # Keine Daten oder Fehler bei der Anfrage
         except Exception as e:
-            _LOGGER.critical(f"Error checking VCF upgrade status: {e}")
-            return "not_connected"
+            _LOGGER.error(f"Error checking VCF upgrade status: {e}")
+        
+        return "not_connected"
 
     @property
     def extra_state_attributes(self):
