@@ -139,33 +139,32 @@ class VCFUpgradeStatusSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def icon(self):
-        state = self.state
-        if state == "upgrades_available":
+        if self.state == "upgrades_available":
             return "mdi:update"
-        elif state == "up_to_date":
+        elif self.state == "up_to_date":
             return "mdi:check-circle"
         else:
-            return "mdi:cloud-off-outline"
+            return "mdi:sync-alert"
 
     @property
     def state(self):
+        """Return the state of the sensor."""
         try:
-            data = self.coordinator.data.get("upgradable_data", {}).get("elements", None)
-
-            # Kein Zugriff oder kein Feld "elements"
-            if data is None:
-                return "not_connected"
-
-            # Zugriff möglich, aber Liste ist leer
-            if isinstance(data, list) and len(data) == 0:
-                return "not_connected"
-
-            # Prüfen ob verfügbare Upgrades enthalten sind
-            upgrades = [b for b in data if b.get("status") == "AVAILABLE"]
-            return "upgrades_available" if upgrades else "up_to_date"
-
+            # Prüfen, ob es eine erfolgreiche API-Antwort gab
+            if self.coordinator.data is not None:
+                # Wir haben eine Antwort vom Coordinator bekommen
+                _LOGGER.critical(f"VCFUpgradeStatusSensor checking data: {self.coordinator.data}")
+                
+                # Selbst wenn elements leer ist, sind wir verbunden!
+                # Das bedeutet: Keine Updates verfügbar = auch "connected"
+                if "upgradable_data" in self.coordinator.data:
+                    # Eine leere Liste bedeutet "verbunden, aber keine Updates"
+                    return "connected"
+                
+            # Keine Daten oder Fehler bei der Anfrage
+            return "not_connected"
         except Exception as e:
-            _LOGGER.warning("Error determining VCF upgrade status: %s", e)
+            _LOGGER.critical(f"Error checking VCF upgrade status: {e}")
             return "not_connected"
 
     @property
