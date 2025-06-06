@@ -1,5 +1,6 @@
 import aiohttp
 import logging
+import time
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -13,73 +14,76 @@ def get_coordinator(hass, config_entry):
     vcf_refresh_token = config_entry.data.get("vcf_refresh_token", "")
     vcf_username = config_entry.data.get("vcf_username", "")
     vcf_password = config_entry.data.get("vcf_password", "")
+    token_expiry = config_entry.data.get("token_expiry", 0)  # Default 0 für unbekannt
     
-    _LOGGER.critical(f"Initializing VCF coordinator with URL: {vcf_url}")
+    _LOGGER.debug(f"Initializing VCF coordinator with URL: {vcf_url}")
 
     async def refresh_vcf_token():
-        """Erneuert den VCF API Token mit Anmeldedaten."""
+        """Refresh VCF API token."""
         if not vcf_url or not vcf_username or not vcf_password:
-            _LOGGER.critical("Cannot refresh VCF token: Missing credentials")
+            _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
             return None
             
         try:
             session = async_get_clientsession(hass)
             login_url = f"{vcf_url}/v1/tokens"
-            _LOGGER.critical(f"Attempting to get new token at: {login_url}")
             
             auth_data = {
                 "username": vcf_username,
                 "password": vcf_password
             }
             
-            # Ausführliches Logging vor dem API-Aufruf
-            _LOGGER.critical(f"Login request data: {auth_data}")
-            
             async with session.post(login_url, json=auth_data, ssl=False) as resp:
                 if resp.status != 200:
-                    error_text = await resp.text()
-                    _LOGGER.critical(f"VCF token refresh failed: {resp.status}, {error_text}")
+                    _LOGGER.error(f"VCF token refresh failed: {resp.status}")
                     return None
                     
                 token_data = await resp.json()
-                _LOGGER.critical(f"Token refresh response keys: {list(token_data.keys())}")
-                
-                # Verschiedene mögliche Token-Formate versuchen
-                new_token = token_data.get("accessToken")
-                if not new_token:
-                    new_token = token_data.get("access_token")
-                if not new_token and isinstance(token_data, str):
-                    new_token = token_data
+                new_token = token_data.get("accessToken") or token_data.get("access_token")
                 
                 if new_token:
-                    _LOGGER.critical("Successfully refreshed VCF token")
-                    
-                    # Aktualisiere die Konfiguration
+                    # Aktualisiere die Konfiguration mit neuem Token und Ablaufzeit
                     new_data = dict(config_entry.data)
                     new_data["vcf_token"] = new_token
+                    
+                    # Token-Ablaufzeit berechnen (1 Stunde ab jetzt)
+                    expiry = int(time.time()) + 3600  # 1 Stunde in Sekunden
+                    new_data["token_expiry"] = expiry
+                    _LOGGER.info(f"New token will expire at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expiry))}")
+                    
                     hass.config_entries.async_update_entry(
-                        config_entry,
+                        config_entry, 
                         data=new_data
                     )
-                    
                     return new_token
                 else:
-                    _LOGGER.critical(f"Could not extract token from response: {token_data}")
+                    _LOGGER.warning(f"Could not extract token from response")
                     return None
                     
         except Exception as e:
-            _LOGGER.critical(f"Error refreshing VCF token: {e}")
+            _LOGGER.error(f"Error refreshing VCF token: {e}")
             return None
 
     async def async_fetch_upgrades():
         """Fetch VCF upgrade information."""
         _LOGGER.debug("VCF Coordinator refreshing data")
         
+        # Prüfe, ob VCF konfiguriert ist
         if not vcf_url:
             _LOGGER.warning("VCF not configured with URL")
             return {"upgradable_data": {"elements": []}}
 
         current_token = config_entry.data.get("vcf_token")
+        current_expiry = config_entry.data.get("token_expiry", 0)
+        
+        # Prüfen, ob das Token in weniger als 10 Minuten abläuft
+        if current_expiry > 0 and time.time() > current_expiry - 600:  # 10 Minuten vor Ablauf
+            _LOGGER.info("VCF token will expire soon, refreshing proactively")
+            new_token = await refresh_vcf_token()
+            if new_token:
+                current_token = new_token
+            else:
+                _LOGGER.warning("Failed to refresh token proactively")
         
         # API-ABRUF
         try:
