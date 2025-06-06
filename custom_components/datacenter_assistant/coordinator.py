@@ -20,7 +20,7 @@ def get_coordinator(hass, config_entry):
 
         session = async_get_clientsession(hass)
 
-        # MOCKDATEN bei fehlender Konfiguration
+        # MOCKDATEN bei fehlender Konfiguration test
         if not vcf_url or not vcf_token:
             _LOGGER.warning("VCF not configured — using mock upgrade data.")
             return {
