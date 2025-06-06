@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from .sensor import async_setup_entry as setup_sensor
 
 _LOGGER = logging.getLogger(__name__)
-_LOGGER.critical("Current log handlers: %s", logging.getLogger().handlers)
+_LOGGER.debug("Initialized with log handlers: %s", logging.getLogger().handlers)
 
 DOMAIN = "datacenter_assistant"
 PLATFORMS = ["sensor", "binary_sensor"]  # Add binary_sensor to platforms

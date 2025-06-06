@@ -85,89 +85,86 @@ def get_coordinator(hass, config_entry):
             else:
                 _LOGGER.warning("Failed to refresh token proactively")
         
-        # API-ABRUF
-        try:
-            session = async_get_clientsession(hass)
-            api_url = f"{vcf_url}/v1/system/upgradables"
-            
-            headers = {
-                "Authorization": f"Bearer {current_token}",
-                "Accept": "application/json"
-            }
-            
-            async with session.get(api_url, headers=headers, ssl=False) as resp:
-                if resp.status == 401:  # Token abgelaufen
-                    _LOGGER.info("VCF token expired, refreshing...")
-                    
-                    new_token = await refresh_vcf_token()
-                    if new_token:
-                        headers["Authorization"] = f"Bearer {new_token}"
-                        _LOGGER.debug("Retrying with new token")
-                        
-                        async with session.get(api_url, headers=headers, ssl=False) as retry_resp:
-                            if retry_resp.status != 200:
-                                _LOGGER.error(f"VCF API retry failed: {retry_resp.status}")
-                                return {"upgradable_data": {"elements": []}}
-                            
-                            raw_data = await retry_resp.json()
-                    else:
-                        _LOGGER.warning("Failed to refresh token")
-                        return {"upgradable_data": {"elements": []}}
-                elif resp.status != 200:
-                    _LOGGER.error(f"VCF API error: {resp.status}")
-                    return {"upgradable_data": {"elements": []}}
-                else:
-                    raw_data = await resp.json()
-                    _LOGGER.debug(f"VCF API success, response type: {type(raw_data)}")
+        # API-ABRUF mit Retry-Mechanismus
+        max_retries = 3
+        retry_delay = 5  # Sekunden
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                session = async_get_clientsession(hass)
+                api_url = f"{vcf_url}/v1/system/upgradables"
                 
-                # Normalisierung der Datenstruktur
-                if isinstance(raw_data, list):
-                    normalized_data = {"elements": raw_data}
-                elif isinstance(raw_data, dict):
-                    if "content" in raw_data and isinstance(raw_data["content"], list):
-                        normalized_data = {"elements": raw_data["content"]}
-                    elif "elements" in raw_data:
-                        normalized_data = raw_data
-                    elif "items" in raw_data and isinstance(raw_data["items"], list):
-                        normalized_data = {"elements": raw_data["items"]}
+                headers = {
+                    "Authorization": f"Bearer {current_token}",
+                    "Accept": "application/json"
+                }
+                
+                # Bei Wiederholungsversuch eine Nachricht ausgeben
+                if attempt > 0:
+                    _LOGGER.info(f"Retry attempt {attempt+1}/{max_retries} for VCF API")
+                
+                async with session.get(api_url, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:  # Token abgelaufen
+                        _LOGGER.info("VCF token expired, refreshing...")
+                        
+                        new_token = await refresh_vcf_token()
+                        if new_token:
+                            headers["Authorization"] = f"Bearer {new_token}"
+                            _LOGGER.debug("Retrying with new token")
+                            
+                            async with session.get(api_url, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    _LOGGER.error(f"VCF API retry failed: {retry_resp.status}")
+                                    # Bei Fehler nach Token-Erneuerung weiter wiederholen
+                                    raise aiohttp.ClientError(f"API returned status {retry_resp.status} after token refresh")
+                                
+                                raw_data = await retry_resp.json()
+                        else:
+                            _LOGGER.warning("Failed to refresh token")
+                            raise aiohttp.ClientError("Failed to refresh token")
+                    elif resp.status != 200:
+                        _LOGGER.error(f"VCF API error: {resp.status}")
+                        raise aiohttp.ClientError(f"API returned status {resp.status}")
+                    else:
+                        raw_data = await resp.json()
+                        _LOGGER.debug(f"VCF API success, response type: {type(raw_data)}")
+                    
+                    # Normalisierung der Datenstruktur
+                    if isinstance(raw_data, list):
+                        normalized_data = {"elements": raw_data}
+                    elif isinstance(raw_data, dict):
+                        if "content" in raw_data and isinstance(raw_data["content"], list):
+                            normalized_data = {"elements": raw_data["content"]}
+                        elif "elements" in raw_data:
+                            normalized_data = raw_data
+                        elif "items" in raw_data and isinstance(raw_data["items"], list):
+                            normalized_data = {"elements": raw_data["items"]}
+                        else:
+                            normalized_data = {"elements": []}
                     else:
                         normalized_data = {"elements": []}
+                    
+                    # Erfolgreicher Aufruf, Return hier
+                    return {"upgradable_data": normalized_data}
+                
+            except aiohttp.ClientError as e:
+                last_exception = e
+                _LOGGER.warning(f"VCF connection error (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    # Exponentielles Backoff für Wiederholungen
+                    wait_time = retry_delay * (2 ** attempt)  # 5, 10, 20 Sekunden
+                    _LOGGER.info(f"Waiting {wait_time} seconds before retry...")
+                    await asyncio.sleep(wait_time)
                 else:
-                    normalized_data = {"elements": []}
-                
-                # TESTCODE: Simuliere ein verfügbares Update (Kommentiere für Produktion aus)
-                # return {
-                #     "upgradable_data": {
-                #         "elements": [
-                #             {
-                #                 "resource": {
-                #                     "fqdn": "esxi01.lab.local",
-                #                     "type": "ESXI"
-                #                 },
-                #                 "status": "AVAILABLE",
-                #                 "description": "ESXi Update 7.0.3"
-                #             },
-                #             {
-                #                 "resource": {
-                #                     "fqdn": "nsx.lab.local",
-                #                     "type": "NSX"
-                #                 },
-                #                 "status": "PENDING",
-                #                 "description": "NSX Update 4.0.1"
-                #             }
-                #         ]
-                #     }
-                # }
-                
-                # Original code (auskommentieren für Tests)
-                return {"upgradable_data": normalized_data}
-            
-        except aiohttp.ClientError as e:
-            _LOGGER.error(f"VCF connection error: {e}")
-            return {"upgradable_data": {"elements": []}}
-        except Exception as e:
-            _LOGGER.error(f"VCF Upgrade fetch error: {e}")
-            return {"upgradable_data": {"elements": []}}
+                    _LOGGER.error(f"VCF connection failed after {max_retries} attempts: {e}")
+            except Exception as e:
+                _LOGGER.error(f"Unexpected error fetching VCF data: {e}")
+                last_exception = e
+                break  # Bei unerwarteten Fehlern nicht wiederholen
+        
+        # Wenn wir hier ankommen, waren alle Versuche erfolglos
+        return {"upgradable_data": {"elements": []}}
 
     return DataUpdateCoordinator(
         hass,
