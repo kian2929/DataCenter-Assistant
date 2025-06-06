@@ -3,7 +3,6 @@ import logging
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.core import callback
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -11,6 +10,7 @@ def get_coordinator(hass, config_entry):
     """Get the data update coordinator."""
     vcf_url = config_entry.data.get("vcf_url")
     vcf_token = config_entry.data.get("vcf_token")
+    vcf_refresh_token = config_entry.data.get("vcf_refresh_token", "")
     vcf_username = config_entry.data.get("vcf_username", "")
     vcf_password = config_entry.data.get("vcf_password", "")
     
@@ -19,64 +19,143 @@ def get_coordinator(hass, config_entry):
     _LOGGER.debug("TESTLOG: Komponente datacenter_assistant wurde geladen")
 
     # Mutable token zur Aktualisierung
-    token_data = {"current_token": vcf_token}
+    token_data = {"access_token": vcf_token, "refresh_token": vcf_refresh_token}
     
     headers = {
-        "Authorization": f"Bearer {token_data['current_token']}",
+        "Authorization": f"Bearer {token_data['access_token']}",
         "Accept": "application/json"
     }
 
-    async def refresh_vcf_token():
-        """Erneuert den VCF API Token."""
+    async def refresh_token_with_refresh_token():
+        """Erneuert den Access-Token mit einem Refresh-Token."""
+        if not vcf_url or not token_data["refresh_token"]:
+            _LOGGER.warning("Cannot refresh token: Missing refresh token")
+            return False
+            
+        try:
+            session = async_get_clientsession(hass)
+            refresh_url = f"{vcf_url}/v1/tokens/refresh"  # Anpassen an den tatsächlichen Endpoint
+            
+            refresh_data = {
+                "refresh_token": token_data["refresh_token"]
+            }
+            
+            _LOGGER.debug(f"Attempting to refresh token with refresh token at: {refresh_url}")
+            
+            async with session.post(refresh_url, json=refresh_data, ssl=False) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"Token refresh failed: {resp.status}, {error_text}")
+                    return False
+                    
+                response_data = await resp.json()
+                _LOGGER.debug(f"Token refresh response: {response_data}")
+                
+                # Extrahiere die neuen Tokens
+                new_access_token = response_data.get("access_token") or response_data.get("accessToken")
+                new_refresh_token = response_data.get("refresh_token") or response_data.get("refreshToken")
+                
+                if new_access_token:
+                    # Aktualisiere die Token-Daten
+                    token_data["access_token"] = new_access_token
+                    if new_refresh_token:
+                        token_data["refresh_token"] = new_refresh_token
+                    
+                    # Aktualisiere den Header
+                    headers["Authorization"] = f"Bearer {new_access_token}"
+                    
+                    # Speichere die Tokens in der Konfiguration
+                    new_data = dict(config_entry.data)
+                    new_data["vcf_token"] = new_access_token
+                    if new_refresh_token:
+                        new_data["vcf_refresh_token"] = new_refresh_token
+                    
+                    hass.config_entries.async_update_entry(
+                        config_entry,
+                        data=new_data
+                    )
+                    
+                    _LOGGER.info("Successfully refreshed access token using refresh token")
+                    return True
+                else:
+                    _LOGGER.error("Failed to extract new access token from response")
+                    return False
+                    
+        except Exception as e:
+            _LOGGER.error(f"Error refreshing token with refresh token: {e}")
+            return False
+
+    async def refresh_token_with_credentials():
+        """Erneuert den Access-Token mit Benutzername und Passwort."""
         if not vcf_url or not vcf_username or not vcf_password:
-            _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
-            return None
+            _LOGGER.warning("Cannot refresh token: Missing credentials")
+            return False
             
         try:
             session = async_get_clientsession(hass)
             login_url = f"{vcf_url}/v1/tokens"
-            _LOGGER.debug(f"Attempting to refresh VCF token at: {login_url}")
             
             auth_data = {
                 "username": vcf_username,
                 "password": vcf_password
             }
             
+            _LOGGER.debug(f"Attempting to refresh token with credentials at: {login_url}")
+            
             async with session.post(login_url, json=auth_data, ssl=False) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    _LOGGER.error(f"VCF token refresh failed: {resp.status}, {error_text}")
-                    return None
+                    _LOGGER.error(f"Token refresh failed: {resp.status}, {error_text}")
+                    return False
                     
-                token_data = await resp.json()
-                _LOGGER.debug(f"Token refresh response: {token_data}")
+                response_data = await resp.json()
+                _LOGGER.debug(f"Token refresh response: {response_data}")
                 
-                # Anpassen je nach tatsächlicher API-Antwort
-                new_token = token_data.get("accessToken")
-                if not new_token:
-                    new_token = token_data.get("access_token")
-                if not new_token and isinstance(token_data, str):
-                    new_token = token_data
+                # Extrahiere die neuen Tokens
+                new_access_token = response_data.get("access_token") or response_data.get("accessToken")
+                new_refresh_token = response_data.get("refresh_token") or response_data.get("refreshToken")
                 
-                if new_token:
-                    _LOGGER.info("Successfully refreshed VCF token")
+                if new_access_token:
+                    # Aktualisiere die Token-Daten
+                    token_data["access_token"] = new_access_token
+                    if new_refresh_token:
+                        token_data["refresh_token"] = new_refresh_token
                     
-                    # Aktualisiere die Konfiguration für Persistenz
+                    # Aktualisiere den Header
+                    headers["Authorization"] = f"Bearer {new_access_token}"
+                    
+                    # Speichere die Tokens in der Konfiguration
                     new_data = dict(config_entry.data)
-                    new_data["vcf_token"] = new_token
+                    new_data["vcf_token"] = new_access_token
+                    if new_refresh_token:
+                        new_data["vcf_refresh_token"] = new_refresh_token
+                    
                     hass.config_entries.async_update_entry(
                         config_entry,
                         data=new_data
                     )
                     
-                    return new_token
+                    _LOGGER.info("Successfully refreshed tokens using credentials")
+                    return True
                 else:
-                    _LOGGER.error(f"Could not extract token from response: {token_data}")
-                    return None
+                    _LOGGER.error("Failed to extract new access token from response")
+                    return False
                     
         except Exception as e:
-            _LOGGER.error(f"Error refreshing VCF token: {e}")
-            return None
+            _LOGGER.error(f"Error refreshing token with credentials: {e}")
+            return False
+
+    async def refresh_tokens():
+        """Versucht verschiedene Methoden, um den Token zu erneuern."""
+        # Versuche zuerst mit Refresh-Token
+        if token_data["refresh_token"]:
+            if await refresh_token_with_refresh_token():
+                return True
+            
+            _LOGGER.warning("Refresh token failed, trying with credentials")
+        
+        # Wenn das fehlschlägt oder kein Refresh-Token existiert, verwende Credentials
+        return await refresh_token_with_credentials()
 
     async def async_fetch_upgrades():
         """Fetch VCF upgrade information with detailed logging."""
@@ -95,21 +174,21 @@ def get_coordinator(hass, config_entry):
             
             # Aktualisierte Header mit aktuellem Token
             current_headers = {
-                "Authorization": f"Bearer {token_data['current_token']}",
+                "Authorization": f"Bearer {token_data['access_token']}",
                 "Accept": "application/json"
             }
             
             async with session.get(api_url, headers=current_headers, ssl=False) as resp:
                 if resp.status == 401:  # Token abgelaufen
                     _LOGGER.warning("VCF token expired, attempting refresh")
-                    new_token = await refresh_vcf_token()
-                    if new_token:
-                        token_data["current_token"] = new_token
-                        current_headers["Authorization"] = f"Bearer {new_token}"
-                        
-                        # Erneuter Versuch mit neuem Token
+                    
+                    if await refresh_tokens():
+                        # Token erfolgreich aktualisiert, erneuter Versuch
                         _LOGGER.debug("Retrying with new token")
-                        async with session.get(api_url, headers=current_headers, ssl=False) as retry_resp:
+                        async with session.get(api_url, headers={
+                            "Authorization": f"Bearer {token_data['access_token']}",
+                            "Accept": "application/json"
+                        }, ssl=False) as retry_resp:
                             if retry_resp.status != 200:
                                 error_text = await retry_resp.text()
                                 _LOGGER.error(f"VCF API retry returned status {retry_resp.status}: {error_text}")
@@ -127,20 +206,6 @@ def get_coordinator(hass, config_entry):
                     raw_data = await resp.json()
                 
                 _LOGGER.debug(f"VCF API raw response: {raw_data}")
-                
-                # Umfangreiches Debug-Logging
-                if isinstance(raw_data, dict):
-                    _LOGGER.debug(f"VCF response is dict with keys: {raw_data.keys()}")
-                    for key in raw_data.keys():
-                        _LOGGER.debug(f"VCF key '{key}' type: {type(raw_data[key])}")
-                        if isinstance(raw_data[key], (list, dict)) and key != "elements":
-                            _LOGGER.debug(f"Contents of '{key}': {raw_data[key]}")
-                elif isinstance(raw_data, list):
-                    _LOGGER.debug(f"VCF response is list with {len(raw_data)} items")
-                    if raw_data and len(raw_data) > 0:
-                        _LOGGER.debug(f"First item: {raw_data[0]}")
-                else:
-                    _LOGGER.debug(f"VCF response is type: {type(raw_data)}")
                 
                 # Normalisierung der Datenstruktur
                 if isinstance(raw_data, list):
