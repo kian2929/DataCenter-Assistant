@@ -11,9 +11,19 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
+        errors = {}
+        
         if user_input is not None:
-            return self.async_create_entry(title="DataCenter Assistant", data=user_input)
+            # Basic validation
+            if user_input.get("vcf_url") and not user_input.get("vcf_token"):
+                errors["vcf_token"] = "missing_vcf_token"
+            elif user_input.get("vcf_token") and not user_input.get("vcf_url"):
+                errors["vcf_url"] = "missing_vcf_url"
+            
+            if not errors:
+                return self.async_create_entry(title="DataCenter Assistant", data=user_input)
 
+        # Show the form with any errors
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
@@ -25,5 +35,6 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required("vmid"): int,
                 vol.Optional("vcf_url", default=""): str,
                 vol.Optional("vcf_token", default=""): str,
-            })
+            }),
+            errors=errors
         )

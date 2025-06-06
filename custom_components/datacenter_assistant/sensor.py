@@ -135,6 +135,15 @@ class VCFUpgradeStatusSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = "VCF Upgrade Status"
         self._attr_unique_id = "vcf_upgrade_status"
 
+    @property
+    def icon(self):
+        state = self.state
+        if state == "upgrades_available":
+            return "mdi:update"
+        elif state == "up_to_date":
+            return "mdi:check-circle"
+        else:
+            return "mdi:cloud-off-outline"
 
     @property
     def state(self):
@@ -166,10 +175,11 @@ class VCFUpgradeStatusSensor(CoordinatorEntity, SensorEntity):
                 "pending_count": len([x for x in data if x.get("status") == "PENDING"]),
                 "scheduled_count": len([x for x in data if x.get("status") == "SCHEDULED"]),
                 "raw_statuses": [x.get("status") for x in data],
+                "connection_error": str(self.coordinator.last_exception) if self.coordinator.last_exception else None,
             }
         except Exception as e:
             _LOGGER.warning("Error extracting VCF attributes: %s", e)
-            return {}
+            return {"error": str(e)}
 
 
 class VCFUpgradeGraphSensor(CoordinatorEntity, SensorEntity):
@@ -179,23 +189,13 @@ class VCFUpgradeGraphSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = "VCF Upgrade Distribution"
         self._attr_unique_id = "vcf_upgrade_distribution"
 
+    @property
+    def icon(self):
+        return "mdi:chart-pie"
 
     @property
     def state(self):
         return "ok"
-
-    @property
-    def extra_state_attributes(self):
-        try:
-            status_counts = {}
-            for item in self.coordinator.data.get("upgradable_data", {}).get("elements", []):
-                status = item.get("status")
-                if status:
-                    status_counts[status] = status_counts.get(status, 0) + 1
-            return status_counts
-        except Exception as e:
-            _LOGGER.warning("Error building VCF status distribution: %s", e)
-            return {}
         
 class VCFUpgradeComponentsSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator):

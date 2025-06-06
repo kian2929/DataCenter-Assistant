@@ -16,7 +16,7 @@ def get_coordinator(hass, config_entry):
     }
 
     async def async_fetch_upgrades():
-        print("DEBUG: Coordinator async_fetch_upgrades() is being called")
+        _LOGGER.debug("VCF Coordinator async_fetch_upgrades() is being called")
 
         session = async_get_clientsession(hass)
 
@@ -53,16 +53,25 @@ def get_coordinator(hass, config_entry):
 
         # ECHTER API-ABRUF
         try:
-
-            async with session.get(f"{vcf_url}/v1/system/upgradables", headers=headers, ssl=False) as resp:
-                resp.raise_for_status()
+            api_url = f"{vcf_url}/v1/system/upgradables"
+            _LOGGER.debug(f"Attempting to fetch VCF data from: {api_url}")
+            
+            async with session.get(api_url, headers=headers, ssl=False) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"VCF API returned status {resp.status}: {error_text}")
+                    raise UpdateFailed(f"Error {resp.status} from VCF API: {error_text}")
+                
                 data = await resp.json()
+                _LOGGER.debug(f"VCF API response: {data}")
                 return {
                     "upgradable_data": data
                 }
+        except aiohttp.ClientError as e:
+            _LOGGER.error(f"VCF connection error: {e}")
+            raise UpdateFailed(f"Connection error: {e}")
         except Exception as e:
             _LOGGER.error(f"VCF Upgrade fetch failed: {e}")
-            print(f"DEBUG: Exception occurred in async_fetch_upgrades(): {e}")
 
             # Optionaler Fallback mit Mockdaten bei Fehler
             return {

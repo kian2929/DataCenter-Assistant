@@ -7,16 +7,24 @@ from .sensor import async_setup_entry as setup_sensor
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "datacenter_assistant"
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "binary_sensor"]  # Add binary_sensor to platforms
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry
 
+    # Configure logging
+    logging.getLogger('custom_components.datacenter_assistant').setLevel(logging.DEBUG)
+    
+    # Setup platforms
     for platform in PLATFORMS:
-        await hass.config_entries.async_forward_entry_setup(entry, platform)
-
+        try:
+            await hass.config_entries.async_forward_entry_setup(entry, platform)
+        except Exception as e:
+            _LOGGER.error(f"Error setting up {platform} platform: {e}")
+    
+    # Register services
     async def reboot_vm_service(call):
         """Handle reboot_vm service call."""
         sensor = hass.data.get("datacenter_assistant_sensors", {}).get(entry.entry_id)
