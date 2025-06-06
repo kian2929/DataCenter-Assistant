@@ -199,6 +199,30 @@ class VCFUpgradeGraphSensor(CoordinatorEntity, SensorEntity):
     def state(self):
         return "ok"
         
+    @property
+    def extra_state_attributes(self):
+        try:
+            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
+            statuses = {}
+            
+            # Zähle die verschiedenen Status-Typen
+            for item in data:
+                status = item.get("status", "UNKNOWN")
+                if status not in statuses:
+                    statuses[status] = 0
+                statuses[status] += 1
+            
+            # Stelle sicher, dass alle erwarteten Status vorhanden sind
+            for status in ["AVAILABLE", "PENDING", "SCHEDULED", "FAILED"]:
+                if status not in statuses:
+                    statuses[status] = 0
+                    
+            return statuses
+        except Exception as e:
+            _LOGGER.warning("Error extracting VCF distribution attributes: %s", e)
+            return {}
+
+        
 class VCFUpgradeComponentsSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator):
         super().__init__(coordinator)
