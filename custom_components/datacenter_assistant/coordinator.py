@@ -132,31 +132,31 @@ def get_coordinator(hass, config_entry):
                     normalized_data = {"elements": []}
                 
                 # TESTCODE: Simuliere ein verfügbares Update (Kommentiere für Produktion aus)
-                return {
-                    "upgradable_data": {
-                        "elements": [
-                            {
-                                "resource": {
-                                    "fqdn": "esxi01.lab.local",
-                                    "type": "ESXI"
-                                },
-                                "status": "AVAILABLE",
-                                "description": "ESXi Update 7.0.3"
-                            },
-                            {
-                                "resource": {
-                                    "fqdn": "nsx.lab.local",
-                                    "type": "NSX"
-                                },
-                                "status": "PENDING",
-                                "description": "NSX Update 4.0.1"
-                            }
-                        ]
-                    }
-                }
+                # return {
+                #     "upgradable_data": {
+                #         "elements": [
+                #             {
+                #                 "resource": {
+                #                     "fqdn": "esxi01.lab.local",
+                #                     "type": "ESXI"
+                #                 },
+                #                 "status": "AVAILABLE",
+                #                 "description": "ESXi Update 7.0.3"
+                #             },
+                #             {
+                #                 "resource": {
+                #                     "fqdn": "nsx.lab.local",
+                #                     "type": "NSX"
+                #                 },
+                #                 "status": "PENDING",
+                #                 "description": "NSX Update 4.0.1"
+                #             }
+                #         ]
+                #     }
+                # }
                 
                 # Original code (auskommentieren für Tests)
-                # return {"upgradable_data": normalized_data}
+                return {"upgradable_data": normalized_data}
             
         except aiohttp.ClientError as e:
             _LOGGER.error(f"VCF connection error: {e}")

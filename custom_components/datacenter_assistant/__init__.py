@@ -19,11 +19,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     logging.getLogger('custom_components.datacenter_assistant').setLevel(logging.CRITICAL)
     
     # Log integration loading
-    _LOGGER.critical("DATACENTER ASSISTANT: Integration wird geladen")
-    _LOGGER.error("DATACENTER ASSISTANT: Test ERROR Log")
-    _LOGGER.warning("DATACENTER ASSISTANT: Test WARNING Log")
-    _LOGGER.info("DATACENTER ASSISTANT: Test INFO Log")
-    _LOGGER.debug("DATACENTER ASSISTANT: Test DEBUG Log")
+    _LOGGER.debug("DataCenter Assistant integration loaded")
     
     # Setup platforms
     for platform in PLATFORMS:
