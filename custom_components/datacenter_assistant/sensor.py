@@ -7,6 +7,7 @@ import aiohttp
 from aiohttp import ClientError
 import asyncio
 from .coordinator import get_coordinator
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
@@ -127,11 +128,13 @@ class ProxmoxVMStatusSensor(SensorEntity):
             _LOGGER.exception("Unexpected error while rebooting VM: %s", e)
 
 
-class VCFUpgradeStatusSensor(SensorEntity):
+class VCFUpgradeStatusSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator):
+        super().__init__(coordinator)
         self.coordinator = coordinator
         self._attr_name = "VCF Upgrade Status"
         self._attr_unique_id = "vcf_upgrade_status"
+
 
     @property
     def state(self):
@@ -169,11 +172,13 @@ class VCFUpgradeStatusSensor(SensorEntity):
             return {}
 
 
-class VCFUpgradeGraphSensor(SensorEntity):
+class VCFUpgradeGraphSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator):
+        super().__init__(coordinator)
         self.coordinator = coordinator
         self._attr_name = "VCF Upgrade Distribution"
         self._attr_unique_id = "vcf_upgrade_distribution"
+
 
     @property
     def state(self):
@@ -192,11 +197,13 @@ class VCFUpgradeGraphSensor(SensorEntity):
             _LOGGER.warning("Error building VCF status distribution: %s", e)
             return {}
         
-class VCFUpgradeComponentsSensor(SensorEntity):
+class VCFUpgradeComponentsSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator):
+        super().__init__(coordinator)
         self.coordinator = coordinator
         self._attr_name = "VCF Upgrade Components"
         self._attr_unique_id = "vcf_upgrade_components"
+
 
     @property
     def state(self):

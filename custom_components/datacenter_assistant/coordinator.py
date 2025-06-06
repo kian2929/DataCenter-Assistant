@@ -16,6 +16,8 @@ def get_coordinator(hass, config_entry):
     }
 
     async def async_fetch_upgrades():
+        print("DEBUG: Coordinator async_fetch_upgrades() is being called")
+
         session = async_get_clientsession(hass)
 
         # MOCKDATEN bei fehlender Konfiguration
@@ -51,13 +53,17 @@ def get_coordinator(hass, config_entry):
 
         # ECHTER API-ABRUF
         try:
+
             async with session.get(f"{vcf_url}/v1/system/upgradables", headers=headers, ssl=False) as resp:
                 resp.raise_for_status()
+                data = await resp.json()
                 return {
-                    "upgradable_data": await resp.json()
+                    "upgradable_data": data
                 }
         except Exception as e:
             _LOGGER.error(f"VCF Upgrade fetch failed: {e}")
+            print(f"DEBUG: Exception occurred in async_fetch_upgrades(): {e}")
+
             # Optionaler Fallback mit Mockdaten bei Fehler
             return {
                 "upgradable_data": {
