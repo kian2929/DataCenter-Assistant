@@ -57,9 +57,6 @@ def get_coordinator(hass, config_entry):
 
         session = async_get_clientsession(hass)
 
-        # Proxmox-Daten vorher holen
-        proxmox_data = await async_fetch_proxmox_data()
-
         # MOCKDATEN bei fehlender Konfiguration
         if not vcf_url or not vcf_token:
             _LOGGER.warning("VCF not configured — using mock upgrade data.")
@@ -107,57 +104,31 @@ def get_coordinator(hass, config_entry):
                 _LOGGER.debug(f"VCF API raw response: {raw_data}")
                 
                 # Datenstruktur analysieren
-                if "elements" not in raw_data and isinstance(raw_data, dict):
-                    _LOGGER.debug(f"Analyzing VCF response structure. Keys: {raw_data.keys()}")
+                if isinstance(raw_data, dict):
+                    _LOGGER.debug(f"VCF response keys: {raw_data.keys()}")
                 
                 # Normalisierung der Datenstruktur
-                # Wenn raw_data selbst bereits eine Liste ist
                 if isinstance(raw_data, list):
                     normalized_data = {"elements": raw_data}
-                # Wenn raw_data ein Dict ist mit einem "content"-Schlüssel oder einem anderen Unterfeld
                 elif isinstance(raw_data, dict):
                     if "content" in raw_data and isinstance(raw_data["content"], list):
                         normalized_data = {"elements": raw_data["content"]}
                     elif "elements" in raw_data:
-                        normalized_data = raw_data  # Bereits im erwarteten Format
+                        normalized_data = raw_data
                     elif "items" in raw_data and isinstance(raw_data["items"], list):
                         normalized_data = {"elements": raw_data["items"]}
-                    # Fallback für leeres Ergebnis
                     else:
                         _LOGGER.warning(f"Unknown VCF API response structure: {raw_data}")
                         normalized_data = {"elements": []}
                 else:
                     _LOGGER.warning(f"Unexpected VCF API response type: {type(raw_data)}")
                     normalized_data = {"elements": []}
-                
-                _LOGGER.debug(f"Normalized VCF data: {normalized_data}")
-                
-                # Kombiniere VCF und Proxmox Daten
-                return {
-                    "upgradable_data": normalized_data,
-                    "proxmox_data": proxmox_data
-                }
-        except aiohttp.ClientError as e:
-            _LOGGER.error(f"VCF connection error: {e}")
-            raise UpdateFailed(f"Connection error: {e}")
+            
+            return {"upgradable_data": normalized_data}
         except Exception as e:
             _LOGGER.error(f"VCF Upgrade fetch failed: {e}")
-
-            # Fallback mit Mockdaten bei Fehler
-            return {
-                "upgradable_data": {
-                    "elements": [
-                        {
-                            "status": "UNAVAILABLE",
-                            "resource": {
-                                "fqdn": "mock.lab.local",
-                                "type": "UNKNOWN"
-                            }
-                        }
-                    ]
-                },
-                "proxmox_data": proxmox_data
-            }
+            # Fallback bei Fehler
+            return {"upgradable_data": {"elements": []}}
 
     return DataUpdateCoordinator(
         hass,
