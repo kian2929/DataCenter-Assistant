@@ -51,7 +51,29 @@ class ProxmoxVMStatusSensor(SensorEntity):
 
     @property
     def state(self):
-        return self._state
+        """Return the state of the VM."""
+        try:
+            vm_data = self.coordinator.data.get("proxmox_data", {})
+            
+            # Debug-Ausgabe für Analyse
+            _LOGGER.debug(f"ProxmoxVMStatusSensor VM data: {vm_data}")
+            
+            # Fehler in VM-Daten
+            if "error" in vm_data and vm_data.get("error"):
+                _LOGGER.warning(f"ProxmoxVM error: {vm_data.get('error')}")
+                return "unknown"
+                
+            # Status Mapping
+            vm_status = vm_data.get("status", "unknown")
+            if vm_status == "running":
+                return "running"
+            elif vm_status == "stopped":
+                return "off"
+            else:
+                return vm_status
+        except Exception as e:
+            _LOGGER.warning(f"Error getting Proxmox VM status: {e}")
+            return "unknown"
 
     @property
     def icon(self):
