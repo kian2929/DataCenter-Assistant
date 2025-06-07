@@ -11,7 +11,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
-DOMAIN = "datacenter_assistant"
+
+# DOMAIN-Definition entfernen und stattdessen hier eine lokale Variable verwenden
+_DOMAIN = "datacenter_assistant"
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
@@ -19,8 +21,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entities = [sensor]
 
     # Save the sensor instance for reboot
-    hass.data["datacenter_assistant_sensors"] = hass.data.get("datacenter_assistant_sensors", {})
-    hass.data["datacenter_assistant_sensors"][entry.entry_id] = sensor
+    hass.data[_DOMAIN] = hass.data.get(_DOMAIN, {})
+    hass.data[_DOMAIN]["sensors"] = hass.data.get(_DOMAIN, {}).get("sensors", {})
+    hass.data[_DOMAIN]["sensors"][entry.entry_id] = sensor
 
     # Optional: Add VCF sensors if they can be initialized
     try:
@@ -41,7 +44,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(entities, True)
 
     # Koordinator in der Hauptdomain speichern für andere Komponenten
-    hass.data.setdefault(DOMAIN, {})["coordinator"] = coordinator
+    hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
 
 
 class ProxmoxVMStatusSensor(SensorEntity):

@@ -4,7 +4,8 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "datacenter_assistant"
+# DOMAIN entfernen - wird aus __init__.py importiert
+from . import DOMAIN
 
 class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for DataCenter Assistant."""

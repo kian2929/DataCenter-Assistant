@@ -1,7 +1,7 @@
 import logging
-import asyncio  # Wichtig: asyncio hinzufügen!
+import asyncio
 import voluptuous as vol
-import time  # Statt lokaler Import in der Methode
+import time
 from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.config_entries import ConfigEntry
@@ -9,18 +9,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from . import DOMAIN  # DOMAIN importieren
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
+_DOMAIN = "datacenter_assistant"  # Lokale Variable anstatt Import
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up the button platform."""
-    coordinator = hass.data.get(DOMAIN, {}).get("coordinator")
+    coordinator = hass.data.get(_DOMAIN, {}).get("coordinator")
     
     if not coordinator:
         coordinator = get_coordinator(hass, entry)
-        hass.data.setdefault(DOMAIN, {})["coordinator"] = coordinator
+        hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     
     entities = [
         VCFRefreshTokenButton(hass, entry),
@@ -90,7 +90,7 @@ class VCFRefreshTokenButton(ButtonEntity):
                     )
                     
                     # Force update des Coordinators
-                    coordinator = self.hass.data.get(DOMAIN, {}).get("coordinator")
+                    coordinator = self.hass.data.get(_DOMAIN, {}).get("coordinator")
                     if coordinator:
                         await coordinator.async_refresh()
                 else:

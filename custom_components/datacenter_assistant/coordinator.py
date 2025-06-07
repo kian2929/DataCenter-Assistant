@@ -8,6 +8,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
+_DOMAIN = "datacenter_assistant"
+
 def get_coordinator(hass, config_entry):
     """Get the data update coordinator."""
     vcf_url = config_entry.data.get("vcf_url")
@@ -174,3 +176,5 @@ def get_coordinator(hass, config_entry):
         update_method=async_fetch_upgrades,
         update_interval=timedelta(minutes=15),
     )
+
+hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator

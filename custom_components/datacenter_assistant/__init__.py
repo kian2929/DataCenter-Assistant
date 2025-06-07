@@ -2,15 +2,13 @@ import logging
 import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from .sensor import async_setup_entry as setup_sensor
-from homeassistant.components.button import ButtonEntity
 import homeassistant.helpers.entity_platform as platform
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.debug("Initialized with log handlers: %s", logging.getLogger().handlers)
 
 DOMAIN = "datacenter_assistant"
-PLATFORMS = ["sensor", "binary_sensor", "button"]  # Button-Plattform hinzufügen
+PLATFORMS = ["sensor", "binary_sensor", "button"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
@@ -29,8 +27,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await hass.config_entries.async_forward_entry_setups(entry, [platform])
         except Exception as e:
             _LOGGER.error(f"Error setting up {platform} platform: {e}")
-    
-    # Register services - existierende Services beibehalten...
     
     return True
 
