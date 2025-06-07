@@ -169,12 +169,15 @@ def get_coordinator(hass, config_entry):
         # Wenn wir hier ankommen, waren alle Versuche erfolglos
         return {"upgradable_data": {"elements": []}}
 
-    return DataUpdateCoordinator(
+    coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="VCF Upgrades",
         update_method=async_fetch_upgrades,
         update_interval=timedelta(minutes=15),
     )
-
-hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
+    
+    # Speichere den Coordinator global für andere Komponenten
+    hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
+    
+    return coordinator
