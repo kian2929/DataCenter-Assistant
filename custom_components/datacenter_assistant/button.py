@@ -1,5 +1,7 @@
 import logging
+import asyncio  # Wichtig: asyncio hinzufügen!
 import voluptuous as vol
+import time  # Statt lokaler Import in der Methode
 from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.config_entries import ConfigEntry
@@ -7,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from . import DOMAIN
+from . import DOMAIN  # DOMAIN importieren
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,7 +24,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     entities = [
         VCFRefreshTokenButton(hass, entry),
-        VCFExecuteUpdatesButton(hass, entry, coordinator)
+        VCFExecuteUpdatesButton(hass, entry, coordinator),
+        VCFCheckDownloadButton(hass, entry, coordinator)  # Neuen Button hinzufügen
     ]
     
     async_add_entities(entities)
@@ -53,7 +56,6 @@ class VCFRefreshTokenButton(ButtonEntity):
             
         try:
             # Direkter API-Aufruf für Token-Erneuerung
-            import time
             session = async_get_clientsession(self.hass)
             login_url = f"{vcf_url}/v1/tokens"
             
@@ -61,6 +63,8 @@ class VCFRefreshTokenButton(ButtonEntity):
                 "username": vcf_username,
                 "password": vcf_password
             }
+            
+            _LOGGER.info(f"Attempting to connect to {login_url}")
             
             async with session.post(login_url, json=auth_data, ssl=False) as resp:
                 if resp.status != 200:
@@ -179,3 +183,76 @@ class VCFExecuteUpdatesButton(ButtonEntity, CoordinatorEntity):
                 
         except Exception as e:
             _LOGGER.error(f"Error executing VCF updates: {e}")
+
+
+class VCFCheckDownloadButton(ButtonEntity, CoordinatorEntity):
+    """Button to check for and download VCF updates."""
+    
+    def __init__(self, hass, entry, coordinator):
+        super().__init__(coordinator)
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self._attr_name = "VCF Check & Download Updates"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_check_download"
+        self._attr_icon = "mdi:download-network"
+    
+    @property
+    def available(self):
+        """Immer verfügbar."""
+        return True
+    
+    async def async_press(self) -> None:
+        """Handle button press to check and download updates."""
+        _LOGGER.info("Checking for and downloading VCF updates")
+        
+        vcf_url = self.entry.data.get("vcf_url")
+        current_token = self.entry.data.get("vcf_token")
+        
+        if not vcf_url or not current_token:
+            _LOGGER.warning("Cannot check for updates: Missing URL or token")
+            return
+        
+        try:
+            session = async_get_clientsession(self.hass)
+            
+            # Schritt 1: Nach Updates suchen
+            check_url = f"{vcf_url}/v1/system/updates/bundles/check"
+            
+            headers = {
+                "Authorization": f"Bearer {current_token}",
+                "Accept": "application/json"
+            }
+            
+            _LOGGER.info(f"Checking for available VCF updates at {check_url}")
+            
+            async with session.post(check_url, headers=headers, json={}, ssl=False) as resp:
+                if resp.status == 401:
+                    _LOGGER.warning("Token expired, please refresh token and try again")
+                    return
+                elif resp.status != 202 and resp.status != 200:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"Failed to check for updates: {resp.status} {error_text}")
+                    return
+                else:
+                    _LOGGER.info("Update check initiated successfully")
+            
+            # Schritt 2: Updates herunterladen (falls welche gefunden wurden)
+            download_url = f"{vcf_url}/v1/system/updates/bundles/download"
+            
+            _LOGGER.info(f"Starting download of available VCF updates at {download_url}")
+            
+            async with session.post(download_url, headers=headers, json={}, ssl=False) as resp:
+                if resp.status == 401:
+                    _LOGGER.warning("Token expired during download, please refresh token and try again")
+                elif resp.status != 202 and resp.status != 200:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"Failed to start update download: {resp.status} {error_text}")
+                else:
+                    _LOGGER.info("Update download initiated successfully")
+            
+            # Aktualisieren des Coordinators
+            await self.coordinator.async_refresh()
+                
+        except Exception as e:
+            _LOGGER.error(f"Error checking for/downloading VCF updates: {e}")

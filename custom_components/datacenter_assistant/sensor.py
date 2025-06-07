@@ -8,6 +8,7 @@ from aiohttp import ClientError
 import asyncio
 from .coordinator import get_coordinator
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from . import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
