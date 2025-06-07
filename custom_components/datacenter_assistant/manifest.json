@@ -9,5 +9,5 @@
   "codeowners": ["@kian2929"],
   "iot_class": "local_polling",
   "loggers": ["custom_components.datacenter_assistant"],
-  "platforms": ["sensor", "binary_sensor"]
+  "platforms": ["sensor", "binary_sensor", "button"]
 }

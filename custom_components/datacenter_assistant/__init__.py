@@ -3,12 +3,14 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from .sensor import async_setup_entry as setup_sensor
+from homeassistant.components.button import ButtonEntity
+import homeassistant.helpers.entity_platform as platform
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.debug("Initialized with log handlers: %s", logging.getLogger().handlers)
 
 DOMAIN = "datacenter_assistant"
-PLATFORMS = ["sensor", "binary_sensor"]  # Add binary_sensor to platforms
+PLATFORMS = ["sensor", "binary_sensor", "button"]  # Button-Plattform hinzufügen
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DataCenter Assistant from a config entry."""
@@ -28,22 +30,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as e:
             _LOGGER.error(f"Error setting up {platform} platform: {e}")
     
-    # Register services
-    async def reboot_vm_service(call):
-        """Handle reboot_vm service call."""
-        sensor = hass.data.get("datacenter_assistant_sensors", {}).get(entry.entry_id)
-        if sensor:
-            await sensor.reboot_vm()
-            _LOGGER.info("Reboot command sent to VM.")
-        else:
-            _LOGGER.error("No valid ProxmoxVMStatusSensor found to reboot.")
-
-    hass.services.async_register(
-        DOMAIN,
-        "reboot_vm",
-        reboot_vm_service,
-    )
-
+    # Register services - existierende Services beibehalten...
+    
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -38,6 +38,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     async_add_entities(entities, True)
 
+    # Koordinator in der Hauptdomain speichern für andere Komponenten
+    hass.data.setdefault(DOMAIN, {})["coordinator"] = coordinator
+
 
 class ProxmoxVMStatusSensor(SensorEntity):
     """Representation of a Proxmox VM Status Sensor."""
