@@ -25,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         VCFRefreshTokenButton(hass, entry),
         VCFExecuteUpdatesButton(hass, entry, coordinator),
-        VCFCheckDownloadButton(hass, entry, coordinator)  # Neuen Button hinzufügen
+        VCFDownloadBundleButton(hass, entry, coordinator)  # Neuer Bundle-Download-Button
     ]
     
     async_add_entities(entities)
@@ -256,3 +256,94 @@ class VCFCheckDownloadButton(ButtonEntity, CoordinatorEntity):
                 
         except Exception as e:
             _LOGGER.error(f"Error checking for/downloading VCF updates: {e}")
+
+
+class VCFDownloadBundleButton(ButtonEntity, CoordinatorEntity):
+    """Button to download selected VCF bundle."""
+    
+    def __init__(self, hass, entry, coordinator, bundle_id=None):
+        super().__init__(coordinator)
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self._bundle_id = bundle_id  # Optional: Um einen spezifischen Bundle herunterzuladen
+        self._attr_name = "VCF Download Bundle"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_download_bundle"
+        self._attr_icon = "mdi:package-down"
+    
+    @property
+    def available(self):
+        """Button ist verfügbar, wenn Bundles existieren."""
+        if not self.coordinator.data or "bundle_data" not in self.coordinator.data:
+            return False
+        
+        bundles = self.coordinator.data["bundle_data"].get("elements", [])
+        return len(bundles) > 0
+    
+    async def async_press(self) -> None:
+        """Handle button press to download VCF bundle."""
+        _LOGGER.info("Starting VCF bundle download")
+        
+        vcf_url = self.entry.data.get("vcf_url")
+        current_token = self.entry.data.get("vcf_token")
+        
+        if not vcf_url or not current_token:
+            _LOGGER.warning("Cannot download bundle: Missing URL or token")
+            return
+        
+        try:
+            session = async_get_clientsession(self.hass)
+            
+            # Hole verfügbare Bundles
+            bundles = []
+            if self.coordinator.data and "bundle_data" in self.coordinator.data:
+                bundles = self.coordinator.data["bundle_data"].get("elements", [])
+            
+            if not bundles:
+                _LOGGER.warning("No bundles available to download")
+                return
+            
+            # Wenn kein spezifisches Bundle-ID angegeben wurde, nimm das erste
+            bundle = None
+            if self._bundle_id:
+                for b in bundles:
+                    if b.get("id") == self._bundle_id:
+                        bundle = b
+                        break
+            else:
+                bundle = bundles[0]  # Nimm das erste Bundle
+            
+            if not bundle:
+                _LOGGER.warning(f"Bundle nicht gefunden")
+                return
+            
+            bundle_id = bundle.get("id")
+            _LOGGER.info(f"Starting download of bundle {bundle.get('name')} (ID: {bundle_id})")
+            
+            # Download-Anfrage starten
+            download_url = f"{vcf_url}/v1/bundles/{bundle_id}"
+            patch_data = {
+                "operation": "DOWNLOAD"
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {current_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            
+            async with session.patch(download_url, headers=headers, json=patch_data, ssl=False) as resp:
+                if resp.status == 401:
+                    _LOGGER.warning("Token expired, please refresh token and try again")
+                elif resp.status != 202 and resp.status != 200:
+                    error_text = await resp.text()
+                    _LOGGER.error(f"Failed to start bundle download: {resp.status} {error_text}")
+                else:
+                    response_data = await resp.json()
+                    _LOGGER.info(f"Bundle download initiated successfully: {response_data}")
+            
+            # Aktualisieren des Coordinators
+            await self.coordinator.async_refresh()
+            
+        except Exception as e:
+            _LOGGER.error(f"Error downloading VCF bundle: {e}")

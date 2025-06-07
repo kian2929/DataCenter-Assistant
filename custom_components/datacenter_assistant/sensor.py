@@ -267,81 +267,65 @@ class VCFUpgradeComponentsSensor(CoordinatorEntity, SensorEntity):
 
 
 class VCFAvailableUpdatesSensor(CoordinatorEntity, SensorEntity):
-    """Sensor that lists all available VCF updates."""
+    """Sensor that lists all available VCF bundles."""
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
         self._attr_name = "VCF Available Updates"
         self._attr_unique_id = "vcf_available_updates"
-        self._attr_icon = "mdi:format-list-bulleted"
+        self._attr_icon = "mdi:package-variant-closed"
         self.coordinator = coordinator
 
     @property
     def state(self):
-        """Return the count of available updates."""
+        """Return the count of available bundles."""
         try:
-            if self.coordinator.data and "upgradable_data" in self.coordinator.data:
-                elements = self.coordinator.data["upgradable_data"].get("elements", [])
-                available_updates = [item for item in elements if item.get("status") == "AVAILABLE"]
-                return len(available_updates)
+            if self.coordinator.data and "bundle_data" in self.coordinator.data:
+                bundles = self.coordinator.data.get("bundle_data", {}).get("elements", [])
+                return len(bundles)
             return 0
         except Exception as e:
-            _LOGGER.error(f"Error counting VCF updates: {e}")
+            _LOGGER.error(f"Error counting VCF bundles: {e}")
             return 0
     
     @property
     def extra_state_attributes(self):
-        """Return details about available updates."""
+        """Return details about available bundles."""
         try:
-            if self.coordinator.data and "upgradable_data" in self.coordinator.data:
-                elements = self.coordinator.data["upgradable_data"].get("elements", [])
+            result = {
+                "bundles": [],
+                "bundle_count": 0
+            }
+            
+            # Bundle-Daten verarbeiten
+            if self.coordinator.data and "bundle_data" in self.coordinator.data:
+                bundles = self.coordinator.data.get("bundle_data", {}).get("elements", [])
+                processed_bundles = []
                 
-                # Nach Status gruppieren
-                available_updates = []
-                pending_updates = []
-                scheduled_updates = []
-                
-                for update in elements:
-                    resource = update.get("resource", {})
-                    update_info = {
-                        "component_type": resource.get("type", "Unknown"),
-                        "fqdn": resource.get("fqdn", "Unknown"),
-                        "description": update.get("description", ""),
-                        "status": update.get("status", "")
+                for bundle in bundles:
+                    bundle_info = {
+                        "id": bundle.get("id", ""),
+                        "name": bundle.get("name", "Unknown"),
+                        "version": bundle.get("version", "Unknown"),
+                        "description": bundle.get("description", ""),
+                        "status": bundle.get("status", ""),
+                        "size": bundle.get("size", ""),
+                        "productType": bundle.get("productType", ""),
+                        "bundleType": bundle.get("bundleType", "")
                     }
                     
-                    if update.get("status") == "AVAILABLE":
-                        available_updates.append(update_info)
-                    elif update.get("status") == "PENDING":
-                        pending_updates.append(update_info)
-                    elif update.get("status") == "SCHEDULED":
-                        scheduled_updates.append(update_info)
+                    processed_bundles.append(bundle_info)
                 
-                return {
-                    "available_updates": available_updates,
-                    "pending_updates": pending_updates,
-                    "scheduled_updates": scheduled_updates,
-                    "available_count": len(available_updates),
-                    "pending_count": len(pending_updates),
-                    "scheduled_count": len(scheduled_updates)
-                }
-            return {
-                "available_updates": [],
-                "pending_updates": [], 
-                "scheduled_updates": [],
-                "available_count": 0,
-                "pending_count": 0,
-                "scheduled_count": 0
-            }
+                result["bundles"] = processed_bundles
+                result["bundle_count"] = len(processed_bundles)
+            
+            return result
+            
         except Exception as e:
-            _LOGGER.error(f"Error getting VCF update details: {e}")
+            _LOGGER.error(f"Error getting VCF bundle details: {e}")
             return {
                 "error": str(e),
-                "available_updates": [],
-                "pending_updates": [],
-                "scheduled_updates": [],
-                "available_count": 0,
-                "pending_count": 0,
-                "scheduled_count": 0
+                "bundles": [],
+                "bundle_count": 0
             }
 

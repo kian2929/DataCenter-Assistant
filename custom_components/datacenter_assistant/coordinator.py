@@ -68,13 +68,13 @@ def get_coordinator(hass, config_entry):
             return None
 
     async def async_fetch_upgrades():
-        """Fetch VCF upgrade information."""
-        _LOGGER.debug("VCF Coordinator refreshing data")
+        """Fetch VCF bundle information."""
+        _LOGGER.debug("VCF Coordinator refreshing bundle data")
         
         # Prüfe, ob VCF konfiguriert ist
         if not vcf_url:
             _LOGGER.warning("VCF not configured with URL")
-            return {"upgradable_data": {"elements": []}}
+            return {"bundle_data": {"elements": []}}
 
         current_token = config_entry.data.get("vcf_token")
         current_expiry = config_entry.data.get("token_expiry", 0)
@@ -96,7 +96,8 @@ def get_coordinator(hass, config_entry):
         for attempt in range(max_retries):
             try:
                 session = async_get_clientsession(hass)
-                api_url = f"{vcf_url}/v1/system/upgradables"
+                # Neuer Endpunkt für Bundle-Management
+                api_url = f"{vcf_url}/v1/bundles"
                 
                 headers = {
                     "Authorization": f"Bearer {current_token}",
@@ -105,9 +106,15 @@ def get_coordinator(hass, config_entry):
                 
                 # Bei Wiederholungsversuch eine Nachricht ausgeben
                 if attempt > 0:
-                    _LOGGER.info(f"Retry attempt {attempt+1}/{max_retries} for VCF API")
+                    _LOGGER.info(f"Retry attempt {attempt+1}/{max_retries} for VCF Bundles API")
                 
-                async with session.get(api_url, headers=headers, ssl=False) as resp:
+                # Parameter für die Filterung
+                params = {
+                    "isCompliant": "true",  # Nur kompatible Bundles anzeigen
+                    "productType": "vcf"     # Auf VCF-Produkte filtern
+                }
+                
+                async with session.get(api_url, headers=headers, params=params, ssl=False) as resp:
                     if resp.status == 401:  # Token abgelaufen
                         _LOGGER.info("VCF token expired, refreshing...")
                         
@@ -116,9 +123,9 @@ def get_coordinator(hass, config_entry):
                             headers["Authorization"] = f"Bearer {new_token}"
                             _LOGGER.debug("Retrying with new token")
                             
-                            async with session.get(api_url, headers=headers, ssl=False) as retry_resp:
+                            async with session.get(api_url, headers=headers, params=params, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
-                                    _LOGGER.error(f"VCF API retry failed: {retry_resp.status}")
+                                    _LOGGER.error(f"VCF Bundles API retry failed: {retry_resp.status}")
                                     # Bei Fehler nach Token-Erneuerung weiter wiederholen
                                     raise aiohttp.ClientError(f"API returned status {retry_resp.status} after token refresh")
                                 
@@ -127,29 +134,51 @@ def get_coordinator(hass, config_entry):
                             _LOGGER.warning("Failed to refresh token")
                             raise aiohttp.ClientError("Failed to refresh token")
                     elif resp.status != 200:
-                        _LOGGER.error(f"VCF API error: {resp.status}")
+                        _LOGGER.error(f"VCF Bundles API error: {resp.status}")
                         raise aiohttp.ClientError(f"API returned status {resp.status}")
                     else:
                         raw_data = await resp.json()
-                        _LOGGER.debug(f"VCF API success, response type: {type(raw_data)}")
+                        _LOGGER.debug(f"VCF Bundles API success, response: {raw_data}")
                     
-                    # Normalisierung der Datenstruktur
-                    if isinstance(raw_data, list):
-                        normalized_data = {"elements": raw_data}
-                    elif isinstance(raw_data, dict):
-                        if "content" in raw_data and isinstance(raw_data["content"], list):
-                            normalized_data = {"elements": raw_data["content"]}
-                        elif "elements" in raw_data:
-                            normalized_data = raw_data
-                        elif "items" in raw_data and isinstance(raw_data["items"], list):
-                            normalized_data = {"elements": raw_data["items"]}
+                    # Normalisierung der Datenstruktur für Bundles
+                    bundles_data = {"elements": []}
+                    
+                    # PageOfBundle Struktur verarbeiten
+                    if isinstance(raw_data, dict):
+                        if "elements" in raw_data:
+                            bundles_list = raw_data["elements"]
+                        elif "content" in raw_data:
+                            bundles_list = raw_data["content"]
+                        elif "bundles" in raw_data:
+                            bundles_list = raw_data["bundles"]
+                        elif "items" in raw_data:
+                            bundles_list = raw_data["items"]
                         else:
-                            normalized_data = {"elements": []}
+                            bundles_list = []
+                            _LOGGER.warning(f"Unbekannte Antwortstruktur: {raw_data.keys()}")
+                    elif isinstance(raw_data, list):
+                        bundles_list = raw_data
                     else:
-                        normalized_data = {"elements": []}
+                        bundles_list = []
+                        _LOGGER.warning(f"Unerwarteter Antworttyp: {type(raw_data)}")
+                    
+                    # Filter nach "VMware Cloud Foundation" in der Beschreibung
+                    filtered_bundles = []
+                    for bundle in bundles_list:
+                        description = bundle.get("description", "").lower()
+                        name = bundle.get("name", "").lower()
+                        
+                        if "vmware cloud foundation" in description:
+                            filtered_bundles.append(bundle)
+                            _LOGGER.debug(f"VCF Bundle gefunden: {bundle.get('name')}")
+                        elif "vcf" in name:
+                            filtered_bundles.append(bundle)
+                            _LOGGER.debug(f"VCF Bundle gefunden (via Name): {bundle.get('name')}")
+                    
+                    bundles_data["elements"] = filtered_bundles
                     
                     # Erfolgreicher Aufruf, Return hier
-                    return {"upgradable_data": normalized_data}
+                    return {"bundle_data": bundles_data, "upgradable_data": {"elements": []}}
                 
             except aiohttp.ClientError as e:
                 last_exception = e
@@ -162,12 +191,12 @@ def get_coordinator(hass, config_entry):
                 else:
                     _LOGGER.error(f"VCF connection failed after {max_retries} attempts: {e}")
             except Exception as e:
-                _LOGGER.error(f"Unexpected error fetching VCF data: {e}")
+                _LOGGER.error(f"Unexpected error fetching VCF bundle data: {e}")
                 last_exception = e
                 break  # Bei unerwarteten Fehlern nicht wiederholen
         
         # Wenn wir hier ankommen, waren alle Versuche erfolglos
-        return {"upgradable_data": {"elements": []}}
+        return {"bundle_data": {"elements": []}, "upgradable_data": {"elements": []}}
 
     coordinator = DataUpdateCoordinator(
         hass,
