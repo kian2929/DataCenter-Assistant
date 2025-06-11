@@ -8,7 +8,13 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up binary sensors for VCF upgrade availability."""
     try:
-        coordinator = get_coordinator(hass, config_entry)
+        # Get or create coordinator
+        coordinator = hass.data.get("datacenter_assistant", {}).get("coordinator")
+        
+        if not coordinator:
+            coordinator = get_coordinator(hass, config_entry)
+            hass.data.setdefault("datacenter_assistant", {})["coordinator"] = coordinator
+            
         await coordinator.async_config_entry_first_refresh()
         entity = VCFUpgradeBinarySensor(coordinator)
         async_add_entities([entity], True)

@@ -3,6 +3,8 @@
     "content_in_root": false,
     "domain": "datacenter_assistant",
     "integration_type": "integration",
-    "country": "de"
-  }
+    "country": "de",
+    "render_readme": true,
+    "iot_class": "Local Polling"
+}
   

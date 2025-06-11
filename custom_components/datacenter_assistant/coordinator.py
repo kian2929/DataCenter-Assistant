@@ -194,8 +194,9 @@ def get_coordinator(hass, config_entry):
                 _LOGGER.error(f"Unexpected error fetching VCF bundle data: {e}")
                 last_exception = e
                 break  # Bei unerwarteten Fehlern nicht wiederholen
-        
-        # Wenn wir hier ankommen, waren alle Versuche erfolglos
+          # Wenn wir hier ankommen, waren alle Versuche erfolglos
+        _LOGGER.error(f"All {max_retries} attempts failed. Last error: {last_exception}")
+        # Return empty data instead of raising exception to prevent integration from becoming unavailable
         return {"bundle_data": {"elements": []}, "upgradable_data": {"elements": []}}
 
     coordinator = DataUpdateCoordinator(

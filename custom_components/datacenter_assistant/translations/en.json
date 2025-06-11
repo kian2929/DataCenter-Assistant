@@ -3,17 +3,21 @@
     "flow_title": "DataCenter Assistant",
     "step": {
       "user": {
-        "title": "Setup DataCenter Assistant",
-        "description": "Enter your server connection details.",
+        "title": "Setup VCF DataCenter Assistant",
+        "description": "Enter your VMware VCF connection details.",
         "data": {
-          "ip_address": "IP Address",
-          "port": "Port",
-          "api_token_id": "API Token ID",
-          "api_token_secret": "API Token Secret",
-          "node": "Node Name",
-          "vmid": "VM ID"
+          "vcf_url": "VCF URL",
+          "vcf_username": "VCF Username", 
+          "vcf_password": "VCF Password",
+          "vcf_token": "VCF Token (Optional)",
+          "vcf_refresh_token": "VCF Refresh Token (Optional)"
         }
       }
+    },
+    "error": {
+      "missing_vcf_url": "VCF URL is required",
+      "missing_vcf_username": "VCF Username is required", 
+      "missing_vcf_password": "VCF Password is required"
     }
   }
 }

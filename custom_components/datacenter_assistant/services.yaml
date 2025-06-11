@@ -1,14 +1,29 @@
-reboot_vm:
-  name: Reboot VM
-  description: Reboots the configured Proxmox VM.
-  fields: {}
-
-notify:
-  name: Notify
-  description: Sends a persistent notification from DataCenter Assistant.
+refresh_token:
+  name: Refresh VCF Token
+  description: Refreshes the VCF authentication token.
   fields: {}
 
 trigger_upgrade:
-  name: Trigger Upgrade
-  description: Sendet einen Upgrade-Befehl an die VCF Lifecycle API.
-  fields: {}
+  name: Trigger VCF Upgrade
+  description: Triggers a VCF upgrade process.
+  fields:
+    component_type:
+      name: Component Type
+      description: The type of component to upgrade (e.g., vcenter, esxi, nsx).
+      selector:
+        text:
+    fqdn:
+      name: FQDN
+      description: The fully qualified domain name of the component.
+      selector:
+        text:
+
+download_bundle:
+  name: Download VCF Bundle
+  description: Downloads a specific VCF bundle.
+  fields:
+    bundle_id:
+      name: Bundle ID
+      description: The ID of the bundle to download.
+      selector:
+        text:
