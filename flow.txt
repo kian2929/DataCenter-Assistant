@@ -1,0 +1,65 @@
+
+Scope: Upgrade VCF 5.2.0 to VCF 5.2.1
+Scope Limitation Reason: It is near impossible to implement a comprehensive solution in the allowed timeframe.
+This is how the upgrade flow looks:
+
+
+
+
+------------------------------------------------
+
+get current VCF version
+GET /v1/releases?domainId={domainID}
+
+------------------------------------------------
+
+
+# GET /v1/bundles to get a list of available bundles
+### from these bundles, consider all bundles with the sub-string "VMware Cloud Foundaton (version)" in the "description"
+### from these bundles, consider the oldest one by looking at "releaseDate". 
+##### Capture the string "VMware Cloud Foundaton (version)" as nextVersion_versionDescription
+##### Capture the version as nextVersion_versionNumber
+##### Capture the value of "releaseDate" as nextVersion_releaseDate
+##### Capture the id into the list nextVersion_bundlesToDownload
+
+##### Check if key "components" (list) has a component with "type" "SDDC_MANAGER". If yes capture "toVersion" of this component as nextVersion_SDDCmanagerUpdate
+$ get current SDDC Manager version and compare
+
+
+# GET /v1/upgradables/domains/{domainId}/?targetVersion=<nextVersion_versionNumber>
+to get what other bundles are needed and what they are for
+# (for each component) GET /V1/bundles/{componentBundleID} to capture details about each component. get the field "description". Capture as nextVersion_componentUpdates = {componentUpdate1: [id, description, version]}
+
+
+
+
+
+> Somehow tell HomeAssistant, that a new VCF version is available. 
+As attribute, tell what version it is (nextVersion_versionNumber).
+If available, display singular component target versions
+
+
+
+
+## If there are other bundles with the same release date and 
+
+------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+GET /v1/upgradables/domains/{domainID} to get all bundles required to upgrade the domain to the required VCF version
+
+
+
+
+
+
+
+
