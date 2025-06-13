@@ -10,6 +10,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _DOMAIN = "datacenter_assistant"
 
+def truncate_description(text, max_length=61):
+    """Truncate description text to max_length characters + '...' if needed."""
+    if not text or not isinstance(text, str):
+        return text
+    if len(text) <= max_length:
+        return text
+    return text[:max_length] + "..."
+
 def get_coordinator(hass, config_entry):
     """Get the data update coordinator."""
     vcf_url = config_entry.data.get("vcf_url")
@@ -200,7 +208,7 @@ def get_coordinator(hass, config_entry):
                     
                     import re
                     for bundle in bundles_elements:
-                        description = bundle.get("description", "")
+                        description = truncate_description(bundle.get("description", ""))
                         # Look for VMware Cloud Foundation upgrade bundles - updated pattern
                         if re.search(r"upgrade bundle for VMware Cloud Foundation \d+\.\d+(?:\.\d+)?(?:\.\d+)?", description, re.IGNORECASE):
                             vcf_bundles.append(bundle)
@@ -232,7 +240,7 @@ def get_coordinator(hass, config_entry):
                         # Extract versions and sort them properly to find the next logical upgrade
                         version_bundles = []
                         for bundle in vcf_bundles:
-                            description = bundle.get("description", "")
+                            description = truncate_description(bundle.get("description", ""))
                             version_pattern = r"VMware Cloud Foundation\s+(\d+\.\d+\.\d+(?:\.\d+)?)"
                             match = re.search(version_pattern, description, re.IGNORECASE)
                             if match:
@@ -287,10 +295,10 @@ def get_coordinator(hass, config_entry):
                             continue
                         
                         # Extract version info as per flow.txt variable naming
-                        description = target_bundle.get("description", "")
+                        description = truncate_description(target_bundle.get("description", ""))
                         
                         next_version_info = {
-                            "versionDescription": description,  # nextVersion_versionDescription
+                            "versionDescription": truncate_description(description),  # nextVersion_versionDescription
                             "versionNumber": target_version,     # nextVersion_versionNumber
                             "releaseDate": target_bundle.get("releaseDate"),  # nextVersion_releaseDate
                             "bundleId": target_bundle.get("id"),
@@ -363,7 +371,7 @@ def get_coordinator(hass, config_entry):
                                                 # Store component update info as per flow.txt format
                                                 component_updates[f"componentUpdate{len(component_updates)+1}"] = {
                                                     "id": component_bundle_id,
-                                                    "description": bundle_detail.get("description", ""),
+                                                    "description": truncate_description(bundle_detail.get("description", "")),
                                                     "version": bundle_detail.get("version", ""),
                                                     "componentType": component_type
                                                 }
@@ -387,7 +395,7 @@ def get_coordinator(hass, config_entry):
                                                 
                                                 component_updates[f"componentUpdate{i+1}"] = {
                                                     "id": next_version_info['bundleId'],
-                                                    "description": f"{comp_type} upgrade to {comp_version}",
+                                                    "description": truncate_description(f"{comp_type} upgrade to {comp_version}"),
                                                     "version": comp_version,
                                                     "componentType": comp_type
                                                 }
@@ -395,7 +403,7 @@ def get_coordinator(hass, config_entry):
                                             # Fallback: create a generic component update entry
                                             component_updates["componentUpdate1"] = {
                                                 "id": next_version_info['bundleId'],
-                                                "description": f"VCF {next_version_info['versionNumber']} upgrade",
+                                                "description": truncate_description(f"VCF {next_version_info['versionNumber']} upgrade"),
                                                 "version": next_version_info['versionNumber'],
                                                 "componentType": "VCF_UPGRADE"
                                             }
@@ -406,7 +414,7 @@ def get_coordinator(hass, config_entry):
                                 # Create a fallback component entry when API fails
                                 component_updates["componentUpdate1"] = {
                                     "id": next_version_info['bundleId'],
-                                    "description": f"VCF {next_version_info['versionNumber']} upgrade (details unavailable)",
+                                    "description": truncate_description(f"VCF {next_version_info['versionNumber']} upgrade (details unavailable)"),
                                     "version": next_version_info['versionNumber'],
                                     "componentType": "VCF_UPGRADE"
                                 }

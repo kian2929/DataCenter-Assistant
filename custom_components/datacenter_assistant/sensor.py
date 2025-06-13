@@ -15,6 +15,14 @@ SCAN_INTERVAL = timedelta(seconds=60)
 # DOMAIN-Definition entfernen und stattdessen hier eine lokale Variable verwenden
 _DOMAIN = "datacenter_assistant"
 
+def truncate_description(text, max_length=61):
+    """Truncate description text to max_length characters + '...' if needed."""
+    if not text or not isinstance(text, str):
+        return text
+    if len(text) <= max_length:
+        return text
+    return text[:max_length] + "..."
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
     entities = []
@@ -39,6 +47,44 @@ async def async_setup_entry(hass, entry, async_add_entities):
         # Store coordinator for dynamic entity creation
         hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
         
+        # Store reference to add_entities for dynamic entity creation
+        hass.data.setdefault(_DOMAIN, {})["async_add_entities"] = async_add_entities
+        
+        # Keep track of existing domain entities to avoid duplicates
+        existing_domain_entities = set()
+        
+        async def _coordinator_update_listener():
+            """Listen for coordinator updates and create entities for new domains."""
+            if coordinator.data and "domain_updates" in coordinator.data:
+                new_entities = []
+                for domain_id, domain_data in coordinator.data["domain_updates"].items():
+                    # Check if we already have entities for this domain
+                    if domain_id not in existing_domain_entities:
+                        domain_name = domain_data.get("domain_name", "Unknown")
+                        domain_prefix = domain_data.get("domain_prefix", f"domain_{domain_id[:8]}_")
+                        
+                        _LOGGER.info(f"Creating entities for newly discovered domain: {domain_name} with prefix: {domain_prefix}")
+                        
+                        # Create unique entity IDs using domain prefix as per flow.txt
+                        new_entities.extend([
+                            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
+                            VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
+                        ])
+                        
+                        # Mark this domain as having entities
+                        existing_domain_entities.add(domain_id)
+                
+                if new_entities:
+                    _LOGGER.info(f"Adding {len(new_entities)} entities for newly discovered domains")
+                    async_add_entities(new_entities, True)
+        
+        def _coordinator_update_callback():
+            """Synchronous callback for coordinator updates that schedules entity creation."""
+            hass.async_create_task(_coordinator_update_listener())
+        
+        # Add listener for coordinator updates
+        coordinator.async_add_listener(_coordinator_update_callback)
+        
         # Schedule domain-specific entity creation after coordinator data is available
         async def _add_domain_entities():
             """Add domain-specific entities after data is available."""
@@ -57,6 +103,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
                         VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
                     ])
+                    
+                    # Mark this domain as having entities
+                    existing_domain_entities.add(domain_id)
                 
                 if new_entities:
                     _LOGGER.info(f"Adding {len(new_entities)} domain-specific entities")
@@ -144,10 +193,10 @@ class VCFOverallStatusSensor(CoordinatorEntity, SensorEntity):
             domains = self.coordinator.data.get("domains", [])
             
             attributes = {
-                "total_domains": len(domains),
-                "domains_with_updates": sum(1 for d in domain_updates.values() if d.get("update_status") == "updates_available"),
-                "domains_up_to_date": sum(1 for d in domain_updates.values() if d.get("update_status") == "up_to_date"),
-                "domains_with_errors": sum(1 for d in domain_updates.values() if d.get("update_status") == "error"),
+                "total": len(domains),
+                "with_updates": sum(1 for d in domain_updates.values() if d.get("update_status") == "updates_available"),
+                "up_to_date": sum(1 for d in domain_updates.values() if d.get("update_status") == "up_to_date"),
+                "errors": sum(1 for d in domain_updates.values() if d.get("update_status") == "error"),
                 "last_check": self.coordinator.last_update_success,
                 "setup_failed": self.coordinator.data.get("setup_failed", False)
             }
@@ -204,9 +253,9 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
                     "name": domain.get("name"),
                     "id": domain_id,
                     "status": domain.get("status"),
-                    "update_status": update_info.get("update_status", "unknown"),
-                    "current_version": update_info.get("current_version"),
-                    "sddc_manager_fqdn": domain.get("sddc_manager_fqdn"),
+                    "upd_status": update_info.get("update_status", "unknown"),
+                    "curr_ver": update_info.get("current_version"),
+                    "sddc_fqdn": domain.get("sddc_manager_fqdn"),
                     "prefix": domain.get("prefix")
                 })
             
@@ -259,28 +308,30 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             domain_data = domain_updates.get(self._domain_id, {})
             
             attributes = {
-                "domain_name": domain_data.get("domain_name"),
-                "domain_prefix": domain_data.get("domain_prefix"),
-                "current_version": domain_data.get("current_version"),
-                "update_status": domain_data.get("update_status")
+                "domain": domain_data.get("domain_name"),
+                "prefix": domain_data.get("domain_prefix"),
+                "curr_ver": domain_data.get("current_version"),
+                "status": domain_data.get("update_status")
             }
             
-            # Add next version information if available (following flow.txt naming)
+            # Add next version information if available (with shorter attribute names)
             next_version = domain_data.get("next_version")
             if next_version:
                 attributes.update({
-                    "nextVersion_versionNumber": next_version.get("versionNumber"),
-                    "nextVersion_versionDescription": next_version.get("versionDescription"),
-                    "nextVersion_releaseDate": next_version.get("releaseDate"),
-                    "nextVersion_bundlesToDownload": next_version.get("bundlesToDownload", [])
+                    "next_ver": next_version.get("versionNumber"),
+                    "next_desc": truncate_description(next_version.get("versionDescription")),
+                    "next_date": next_version.get("releaseDate"),
+                    "next_bundles": next_version.get("bundlesToDownload", [])
                 })
             
-            # Add component updates (following flow.txt format)
+            # Add component updates (with shorter names)
             component_updates = domain_data.get("component_updates", {})
             for comp_name, comp_data in component_updates.items():
-                attributes[f"nextVersion_componentUpdates_{comp_name}_description"] = comp_data.get("description")
-                attributes[f"nextVersion_componentUpdates_{comp_name}_version"] = comp_data.get("version")
-                attributes[f"nextVersion_componentUpdates_{comp_name}_id"] = comp_data.get("id")
+                # Shorten component name if needed
+                short_comp = comp_name[:12] if len(comp_name) > 12 else comp_name
+                attributes[f"{short_comp}_desc"] = truncate_description(comp_data.get("description"))
+                attributes[f"{short_comp}_ver"] = comp_data.get("version")
+                attributes[f"{short_comp}_id"] = comp_data.get("id")
             
             # Add error if present
             if "error" in domain_data:
@@ -328,19 +379,20 @@ class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
             domain_data = domain_updates.get(self._domain_id, {})
             component_updates = domain_data.get("component_updates", {})
             
-            # Format components for easy consumption
+            # Format components for easy consumption (with shorter attribute names)
             components = {}
             for comp_name, comp_data in component_updates.items():
+                # Use shorter but clear attribute names
                 components[comp_name] = {
-                    "description": comp_data.get("description"),
-                    "version": comp_data.get("version"),
+                    "desc": truncate_description(comp_data.get("description")),
+                    "ver": comp_data.get("version"),
                     "bundle_id": comp_data.get("id"),
-                    "component_type": comp_data.get("componentType")
+                    "type": comp_data.get("componentType")
                 }
             
             return {
-                "domain_name": domain_data.get("domain_name"),
-                "component_count": len(component_updates),
+                "domain": domain_data.get("domain_name"),
+                "count": len(component_updates),
                 "components": components
             }
             
