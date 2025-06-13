@@ -35,20 +35,32 @@ class VCFUpgradeOrchestrator:
     async def get_current_token(self) -> Optional[str]:
         """Get current VCF token from coordinator or refresh if needed."""
         try:
-            current_token = self.hass.data.get("datacenter_assistant", {}).get("vcf_token")
-            if not current_token:
-                # Try to get token from entry data or get a new one
-                entry_data = self.hass.data.get("datacenter_assistant", {})
-                vcf_config = None
-                for entry_id, entry_info in entry_data.items():
-                    if hasattr(entry_info, 'get') and 'vcf_url' in entry_info:
-                        vcf_config = entry_info
-                        break
-                
-                if vcf_config:
-                    current_token = vcf_config.get("vcf_token")
-            return current_token
-            return current_token
+            # Get token from the coordinator's config entry
+            if hasattr(self.coordinator, 'config_entry') and self.coordinator.config_entry:
+                current_token = self.coordinator.config_entry.data.get("vcf_token")
+                if current_token:
+                    return current_token
+            
+            # Fallback: try to get from hass data
+            integration_data = self.hass.data.get("datacenter_assistant", {})
+            for entry_id, entry_data in integration_data.items():
+                if isinstance(entry_data, dict) and "vcf_token" in entry_data:
+                    return entry_data.get("vcf_token")
+            
+            # Try to refresh token through coordinator
+            if hasattr(self.coordinator, 'config_entry'):
+                try:
+                    await self.coordinator.async_refresh()
+                    # Try again after refresh
+                    current_token = self.coordinator.config_entry.data.get("vcf_token")
+                    if current_token:
+                        _LOGGER.info("Successfully refreshed VCF token")
+                        return current_token
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to refresh coordinator data: {e}")
+            
+            _LOGGER.error("No VCF token found in coordinator or hass data")
+            return None
         except Exception as e:
             _LOGGER.error(f"Failed to get VCF token: {e}")
             return None
@@ -68,6 +80,13 @@ class VCFUpgradeOrchestrator:
                 "logs": self.logs,
                 "last_updated": datetime.now().isoformat()
             }
+        
+        # Trigger coordinator update to refresh all entities
+        if hasattr(self.coordinator, 'async_update_listeners'):
+            try:
+                self.coordinator.async_update_listeners()
+            except Exception as e:
+                _LOGGER.debug(f"Error updating coordinator listeners: {e}")
     
     def add_log(self, message: str, level: str = "info"):
         """Add a log message to the upgrade logs."""
@@ -89,6 +108,13 @@ class VCFUpgradeOrchestrator:
         self.logs += f"**{timestamp}** {icon} {message}\n\n"
         
         _LOGGER.info(f"Domain {self.domain_name}: {message}")
+        
+        # Trigger coordinator update to refresh log entities
+        if hasattr(self.coordinator, 'async_update_listeners'):
+            try:
+                self.coordinator.async_update_listeners()
+            except Exception as e:
+                _LOGGER.debug(f"Error updating coordinator listeners: {e}")
     
     async def start_upgrade_process(self):
         """Start the complete upgrade process."""
@@ -201,7 +227,7 @@ class VCFUpgradeOrchestrator:
         """Download a single bundle."""
         try:
             download_url = f"{self.vcf_url}/v1/bundles/{bundle_id}"
-            patch_data = {"operation": "DOWNLOAD"}
+            patch_data = {"downloadNow": True}  # According to flow2.txt
             
             async with session.patch(download_url, headers=headers, json=patch_data, ssl=False) as resp:
                 if resp.status in [200, 202, 204]:
@@ -529,16 +555,253 @@ class VCFUpgradeOrchestrator:
             self.add_log("Starting component upgrades", "info")
             self.update_status("starting_upgrades")
             
-            # Implementation would be complex - this is a placeholder
-            # You would need to implement the actual upgrade logic here
-            # following the API documentation
+            token = await self.get_current_token()
+            if not token:
+                self.add_log("Cannot get VCF token for upgrades", "error")
+                return False
             
-            await asyncio.sleep(5)  # Simulate upgrade time
-            self.add_log("Component upgrades completed (placeholder)", "success")
+            session = async_get_clientsession(self.hass)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            
+            # Get upgradable components
+            upgradables_url = f"{self.vcf_url}/v1/upgradables/domains/{self.domain_id}/?targetVersion={self.target_version}"
+            
+            async with session.get(upgradables_url, headers=headers, ssl=False) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    self.add_log(f"Failed to get upgradable components: {resp.status} - {error_text}", "error")
+                    return False
+                
+                upgradables_response = await resp.json()
+                upgradable_resources = upgradables_response.get("elements", [])
+            
+            if not upgradable_resources:
+                self.add_log("No upgradable components found", "warning")
+                return True
+            
+            # Separate SDDC Manager from other components
+            sddc_manager_resource = None
+            other_resources = []
+            
+            for resource in upgradable_resources:
+                if resource.get("status") == "AVAILABLE":
+                    resource_type = resource.get("type", "").upper()
+                    if "SDDC" in resource_type or "MANAGER" in resource_type:
+                        sddc_manager_resource = resource
+                    else:
+                        other_resources.append(resource)
+            
+            # Upgrade SDDC Manager first if needed
+            if sddc_manager_resource:
+                self.add_log("Upgrading SDDC Manager first - API will be unavailable during this process", "warning")
+                if not await self._upgrade_component(session, headers, sddc_manager_resource, is_sddc_manager=True):
+                    return False
+            
+            # Upgrade other components
+            for resource in other_resources:
+                if not await self._upgrade_component(session, headers, resource):
+                    return False
+            
+            self.add_log("All component upgrades completed successfully", "success")
             return True
             
         except Exception as e:
             self.add_log(f"Upgrade execution failed: {str(e)}", "error")
+            return False
+
+    async def _upgrade_component(self, session, headers, resource: Dict, is_sddc_manager: bool = False) -> bool:
+        """Upgrade a single component."""
+        try:
+            resource_id = resource.get("id")
+            resource_type = resource.get("type", "Unknown")
+            self.add_log(f"Starting upgrade for {resource_type} (ID: {resource_id})", "info")
+            
+            # Start the upgrade
+            upgrade_url = f"{self.vcf_url}/v1/upgrades"
+            upgrade_data = {
+                "resources": [resource]
+            }
+            
+            async with session.post(upgrade_url, headers=headers, json=upgrade_data, ssl=False) as resp:
+                if resp.status not in [200, 201, 202]:
+                    error_text = await resp.text()
+                    self.add_log(f"Failed to start upgrade for {resource_type}: {resp.status} - {error_text}", "error")
+                    return False
+                
+                upgrade_response = await resp.json()
+                upgrade_id = upgrade_response.get("id")
+                
+                if not upgrade_id:
+                    self.add_log(f"No upgrade ID received for {resource_type}", "error")
+                    return False
+            
+            self.add_log(f"Started upgrade for {resource_type}: {upgrade_id[:8]}...", "info")
+            
+            # Monitor the upgrade with appropriate timeout
+            timeout_hours = 3  # Default timeout
+            if is_sddc_manager:
+                timeout_hours = 4  # Longer timeout for SDDC Manager
+                return await self._monitor_sddc_manager_upgrade(session, upgrade_id, resource_type, timeout_hours)
+            else:
+                return await self._monitor_component_upgrade(session, headers, upgrade_id, resource_type, timeout_hours)
+            
+        except Exception as e:
+            self.add_log(f"Error upgrading component {resource_type}: {str(e)}", "error")
+            return False
+
+    async def _monitor_sddc_manager_upgrade(self, session, upgrade_id: str, resource_type: str, timeout_hours: int) -> bool:
+        """Monitor SDDC Manager upgrade with special handling for API unavailability."""
+        try:
+            start_time = datetime.now()
+            timeout = timedelta(hours=timeout_hours)
+            check_interval = 60  # Check every minute initially
+            
+            self.add_log(f"Monitoring {resource_type} upgrade (will be unavailable during upgrade)", "info")
+            
+            # Initial monitoring before API becomes unavailable
+            initial_monitoring_time = timedelta(minutes=10)  # Monitor for 10 minutes initially
+            
+            while (datetime.now() - start_time) < initial_monitoring_time:
+                await asyncio.sleep(check_interval)
+                
+                try:
+                    # Try to get current token (will fail when API becomes unavailable)
+                    token = await self.get_current_token()
+                    if not token:
+                        break
+                    
+                    headers = {
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    }
+                    
+                    upgrade_url = f"{self.vcf_url}/v1/upgrades/{upgrade_id}"
+                    async with session.get(upgrade_url, headers=headers, ssl=False) as resp:
+                        if resp.status == 200:
+                            upgrade_response = await resp.json()
+                            status = upgrade_response.get("status", "UNKNOWN")
+                            
+                            if status in ["COMPLETED", "SUCCESSFUL"]:
+                                self.add_log(f"{resource_type} upgrade completed successfully", "success")
+                                return True
+                            elif status in ["FAILED", "CANCELLED"]:
+                                self.add_log(f"{resource_type} upgrade failed: {status}", "error")
+                                return False
+                            
+                            self.add_log(f"{resource_type} upgrade status: {status}", "info")
+                        else:
+                            # API is becoming unavailable
+                            break
+                            
+                except Exception:
+                    # API is now unavailable, break and wait for recovery
+                    break
+            
+            # API is now unavailable during SDDC Manager upgrade
+            self.add_log(f"API is now unavailable during {resource_type} upgrade - waiting for recovery", "warning")
+            
+            # Wait for API to become available again
+            return await self._wait_for_api_recovery(session, start_time, timeout)
+            
+        except Exception as e:
+            self.add_log(f"Error monitoring {resource_type} upgrade: {str(e)}", "error")
+            return False
+
+    async def _wait_for_api_recovery(self, session, start_time: datetime, timeout: timedelta) -> bool:
+        """Wait for API to recover after SDDC Manager upgrade."""
+        try:
+            recovery_check_interval = 120  # Check every 2 minutes during recovery
+            
+            self.add_log("Waiting for API to recover after SDDC Manager upgrade...", "info")
+            
+            while (datetime.now() - start_time) < timeout:
+                await asyncio.sleep(recovery_check_interval)
+                
+                try:
+                    # Try to access the domains endpoint to check if API is back
+                    domains_url = f"{self.vcf_url}/v1/domains"
+                    
+                    # Try without auth first to see if API is responding
+                    async with session.get(domains_url, ssl=False, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        if resp.status in [200, 401]:  # 401 means API is responding but needs auth
+                            self.add_log("API is responding again - waiting additional 5 minutes for stability", "info")
+                            await asyncio.sleep(300)  # Wait additional 5 minutes
+                            
+                            # Now check with proper authentication
+                            token = await self.get_current_token()
+                            if token:
+                                headers = {
+                                    "Authorization": f"Bearer {token}",
+                                    "Accept": "application/json"
+                                }
+                                
+                                async with session.get(domains_url, headers=headers, ssl=False) as auth_resp:
+                                    if auth_resp.status == 200:
+                                        self.add_log("API fully recovered and authenticated successfully", "success")
+                                        return True
+                                    else:
+                                        self.add_log("API responding but authentication failed - continuing to wait", "warning")
+                            else:
+                                self.add_log("API responding but token refresh failed - continuing to wait", "warning")
+                        
+                except Exception as e:
+                    # API still not available, continue waiting
+                    elapsed = datetime.now() - start_time
+                    remaining = timeout - elapsed
+                    self.add_log(f"API still unavailable - {remaining.total_seconds()/60:.1f} minutes remaining", "info")
+                    continue
+            
+            # Timeout reached
+            self.add_log("Timeout waiting for API recovery after SDDC Manager upgrade", "error")
+            return False
+            
+        except Exception as e:
+            self.add_log(f"Error waiting for API recovery: {str(e)}", "error")
+            return False
+
+    async def _monitor_component_upgrade(self, session, headers, upgrade_id: str, resource_type: str, timeout_hours: int) -> bool:
+        """Monitor regular component upgrade."""
+        try:
+            start_time = datetime.now()
+            timeout = timedelta(hours=timeout_hours)
+            check_interval = 60  # Check every minute
+            
+            upgrade_url = f"{self.vcf_url}/v1/upgrades/{upgrade_id}"
+            
+            while (datetime.now() - start_time) < timeout:
+                await asyncio.sleep(check_interval)
+                
+                async with session.get(upgrade_url, headers=headers, ssl=False) as resp:
+                    if resp.status != 200:
+                        self.add_log(f"Failed to check {resource_type} upgrade status: {resp.status}", "warning")
+                        continue
+                    
+                    upgrade_response = await resp.json()
+                    status = upgrade_response.get("status", "UNKNOWN")
+                    
+                    if status in ["COMPLETED", "SUCCESSFUL"]:
+                        self.add_log(f"{resource_type} upgrade completed successfully", "success")
+                        return True
+                    elif status in ["FAILED", "CANCELLED"]:
+                        self.add_log(f"{resource_type} upgrade failed: {status}", "error")
+                        return False
+                    elif status == "IN_PROGRESS":
+                        progress = upgrade_response.get("progress", {}).get("percentageComplete", 0)
+                        self.add_log(f"{resource_type} upgrade progress: {progress}%", "info")
+                    else:
+                        self.add_log(f"{resource_type} upgrade status: {status}", "info")
+            
+            # Timeout reached
+            self.add_log(f"{resource_type} upgrade timeout reached ({timeout_hours} hours)", "error")
+            return False
+            
+        except Exception as e:
+            self.add_log(f"Error monitoring {resource_type} upgrade: {str(e)}", "error")
             return False
     
     async def _final_validation(self) -> bool:
