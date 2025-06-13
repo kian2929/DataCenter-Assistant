@@ -66,12 +66,25 @@ class VCFConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
             domains = self.coordinator.data.get("domains", [])
             setup_failed = self.coordinator.data.get("setup_failed", False)
             
-            return {
+            attributes = {
                 "domain_count": len(domains),
                 "setup_failed": setup_failed,
-                "last_update": self.coordinator.last_update_success,
-                "error": self.coordinator.data.get("error") if self.coordinator.data else None
             }
+            
+            # Add last successful update time in readable format
+            if self.coordinator.last_update_success:
+                from datetime import datetime
+                last_update_time = datetime.fromtimestamp(self.coordinator.last_update_success).strftime("%Y-%m-%d %H:%M:%S")
+                attributes["last_successful_update"] = last_update_time
+            else:
+                attributes["last_successful_update"] = "Never"
+            
+            # Only add error if there actually is one
+            coordinator_error = self.coordinator.data.get("error") if self.coordinator.data else None
+            if coordinator_error:
+                attributes["connection_error"] = coordinator_error
+                
+            return attributes
         except Exception as e:
             return {"error": str(e)}
 
@@ -135,7 +148,7 @@ class VCFUpdatesAvailableBinarySensor(CoordinatorEntity, BinarySensorEntity):
                         "domain_name": domain_data.get("domain_name"),
                         "current_version": domain_data.get("current_version"),
                         "next_version": next_version.get("versionNumber"),
-                        "component_count": len(domain_data.get("component_updates", {}))
+                        "components_with_updates": len(domain_data.get("component_updates", {}))
                     })
             
             return {

@@ -251,12 +251,12 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
                 
                 domain_details.append({
                     "name": domain.get("name"),
-                    "id": domain_id,
+                    "domainID": domain_id,
                     "status": domain.get("status"),
                     "upd_status": update_info.get("update_status", "unknown"),
                     "curr_ver": update_info.get("current_version"),
                     "sddc_fqdn": domain.get("sddc_manager_fqdn"),
-                    "prefix": domain.get("prefix")
+                    "homeassistant_prefix": domain.get("prefix")
                 })
             
             return {"domains": domain_details}
@@ -345,7 +345,7 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
 
 
 class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
-    """Sensor for individual domain components that can be updated."""
+    """Sensor for individual domain components with available updates."""
     
     def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
         super().__init__(coordinator)
@@ -354,15 +354,15 @@ class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
         self._domain_name = domain_name
         self._domain_prefix = domain_prefix or f"domain_{domain_id[:8]}_"
         
-        # Use domain prefix for entity naming as per flow.txt
+        # Use domain prefix for entity naming - simplified name since prefix already indicates domain
         safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        self._attr_name = f"VCF {self._domain_prefix}{domain_name} Components"
-        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_components"
-        self._attr_icon = "mdi:package-variant"
+        self._attr_name = f"VCF {self._domain_prefix}Available Updates"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_available_updates"
+        self._attr_icon = "mdi:update"
 
     @property
     def state(self):
-        """Return count of components with updates available."""
+        """Return count of components with available updates."""
         try:
             domain_updates = self.coordinator.data.get("domain_updates", {})
             domain_data = domain_updates.get(self._domain_id, {})
@@ -373,30 +373,41 @@ class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return component details for this domain."""
+        """Return component update details for this domain."""
         try:
             domain_updates = self.coordinator.data.get("domain_updates", {})
             domain_data = domain_updates.get(self._domain_id, {})
             component_updates = domain_data.get("component_updates", {})
             
-            # Format components for easy consumption (with shorter attribute names)
-            components = {}
-            for comp_name, comp_data in component_updates.items():
-                # Use shorter but clear attribute names
-                components[comp_name] = {
+            # Sort components to put SDDC Manager first, then others alphabetically
+            sorted_components = {}
+            
+            # Add SDDC Manager first if it exists
+            sddc_components = {k: v for k, v in component_updates.items() if 'sddc' in k.lower() or 'manager' in k.lower()}
+            for comp_name, comp_data in sddc_components.items():
+                sorted_components[comp_name] = {
                     "desc": truncate_description(comp_data.get("description")),
                     "ver": comp_data.get("version"),
-                    "bundle_id": comp_data.get("id"),
-                    "type": comp_data.get("componentType")
+                    "bundle_id": comp_data.get("id")
+                }
+            
+            # Add other components alphabetically
+            other_components = {k: v for k, v in component_updates.items() if k not in sddc_components}
+            for comp_name in sorted(other_components.keys()):
+                comp_data = other_components[comp_name]
+                sorted_components[comp_name] = {
+                    "desc": truncate_description(comp_data.get("description")),
+                    "ver": comp_data.get("version"),
+                    "bundle_id": comp_data.get("id")
                 }
             
             return {
                 "domain": domain_data.get("domain_name"),
-                "count": len(component_updates),
-                "components": components
+                "updates_available": len(component_updates),
+                "components": sorted_components
             }
             
         except Exception as e:
-            _LOGGER.error(f"Error getting domain {self._domain_name} components: {e}")
+            _LOGGER.error(f"Error getting domain {self._domain_name} available updates: {e}")
             return {"error": str(e)}
 
