@@ -197,7 +197,6 @@ class VCFOverallStatusSensor(CoordinatorEntity, SensorEntity):
                 "with_updates": sum(1 for d in domain_updates.values() if d.get("update_status") == "updates_available"),
                 "up_to_date": sum(1 for d in domain_updates.values() if d.get("update_status") == "up_to_date"),
                 "errors": sum(1 for d in domain_updates.values() if d.get("update_status") == "error"),
-                "last_check": self.coordinator.last_update_success,
                 "setup_failed": self.coordinator.data.get("setup_failed", False)
             }
             
@@ -205,8 +204,8 @@ class VCFOverallStatusSensor(CoordinatorEntity, SensorEntity):
             domain_list = []
             for domain in domains:
                 domain_list.append({
-                    "name": domain.get("name"),
-                    "id": domain.get("id"),
+                    "domainName": domain.get("name"),
+                    "domainID": domain.get("id"),
                     "status": domain_updates.get(domain.get("id"), {}).get("update_status", "unknown")
                 })
             attributes["domains"] = domain_list
@@ -250,7 +249,7 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
                 update_info = domain_updates.get(domain_id, {})
                 
                 domain_details.append({
-                    "name": domain.get("name"),
+                    "domainName": domain.get("name"),
                     "domainID": domain_id,
                     "status": domain.get("status"),
                     "upd_status": update_info.get("update_status", "unknown"),
@@ -276,10 +275,10 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
         self._domain_name = domain_name
         self._domain_prefix = domain_prefix or f"domain_{domain_id[:8]}_"
         
-        # Use domain prefix for entity naming as per flow.txt
+        # Use domain prefix for entity naming - simplified without domain name
         safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        self._attr_name = f"VCF {self._domain_prefix}{domain_name} Updates"
-        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_updates"
+        self._attr_name = f"VCF {self._domain_prefix}Status"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_status"
 
     @property
     def icon(self):
@@ -310,28 +309,19 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             attributes = {
                 "domain": domain_data.get("domain_name"),
                 "prefix": domain_data.get("domain_prefix"),
-                "curr_ver": domain_data.get("current_version"),
+                "current_version": domain_data.get("current_version"),
                 "status": domain_data.get("update_status")
             }
             
-            # Add next version information if available (with shorter attribute names)
+            # Add next version information if available
             next_version = domain_data.get("next_version")
             if next_version:
                 attributes.update({
-                    "next_ver": next_version.get("versionNumber"),
+                    "next_version": next_version.get("versionNumber"),
                     "next_desc": truncate_description(next_version.get("versionDescription")),
                     "next_date": next_version.get("releaseDate"),
-                    "next_bundles": next_version.get("bundlesToDownload", [])
+                    "next_vcf_bundle": next_version.get("bundlesToDownload", [])
                 })
-            
-            # Add component updates (with shorter names)
-            component_updates = domain_data.get("component_updates", {})
-            for comp_name, comp_data in component_updates.items():
-                # Shorten component name if needed
-                short_comp = comp_name[:12] if len(comp_name) > 12 else comp_name
-                attributes[f"{short_comp}_desc"] = truncate_description(comp_data.get("description"))
-                attributes[f"{short_comp}_ver"] = comp_data.get("version")
-                attributes[f"{short_comp}_id"] = comp_data.get("id")
             
             # Add error if present
             if "error" in domain_data:
