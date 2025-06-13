@@ -22,12 +22,79 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         coordinator = get_coordinator(hass, entry)
         hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     
+    # Wait for coordinator to have data to create domain-specific buttons
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as e:
+        _LOGGER.warning("Button coordinator first refresh failed: %s", e)
+    
     entities = [
         VCFRefreshTokenButton(hass, entry),
         VCFManualUpdateCheckButton(hass, entry, coordinator),
         VCFExecuteUpdatesButton(hass, entry, coordinator),
         VCFDownloadBundleButton(hass, entry, coordinator)
     ]
+    
+    # Store reference for dynamic entity creation
+    hass.data.setdefault(_DOMAIN, {})["button_async_add_entities"] = async_add_entities
+    
+    # Keep track of existing domain buttons to avoid duplicates
+    existing_domain_buttons = set()
+    
+    def _coordinator_update_callback():
+        """Listen for coordinator updates and create buttons for new domains."""
+        if coordinator.data and "domain_updates" in coordinator.data:
+            new_entities = []
+            for domain_id, domain_data in coordinator.data["domain_updates"].items():
+                # Check if we already have buttons for this domain
+                if domain_id not in existing_domain_buttons:
+                    domain_name = domain_data.get("domain_name", "Unknown")
+                    domain_prefix = domain_data.get("domain_prefix", f"domain{len(existing_domain_buttons) + 1}")
+                    
+                    _LOGGER.info(f"Creating buttons for newly discovered domain: {domain_name} with prefix: {domain_prefix}")
+                    
+                    new_entities.extend([
+                        VCFDomainUpgradeButton(hass, entry, coordinator, domain_id, domain_name, domain_prefix),
+                        VCFDomainAcknowledgeAlertsButton(hass, entry, coordinator, domain_id, domain_name, domain_prefix)
+                    ])
+                    
+                    # Mark this domain as having buttons
+                    existing_domain_buttons.add(domain_id)
+            
+            if new_entities:
+                _LOGGER.info(f"Adding {len(new_entities)} buttons for newly discovered domains")
+                async_add_entities(new_entities, True)
+    
+    # Add listener for coordinator updates
+    coordinator.async_add_listener(_coordinator_update_callback)
+    
+    # Schedule domain-specific button creation after coordinator data is available
+    async def _add_domain_buttons():
+        """Add domain-specific buttons after data is available."""
+        await coordinator.async_request_refresh()  # Ensure we have fresh data
+        
+        if coordinator.data and "domain_updates" in coordinator.data:
+            new_entities = []
+            for i, (domain_id, domain_data) in enumerate(coordinator.data["domain_updates"].items()):
+                domain_name = domain_data.get("domain_name", "Unknown")
+                domain_prefix = domain_data.get("domain_prefix", f"domain{i + 1}")
+                
+                _LOGGER.info(f"Creating buttons for domain: {domain_name} with prefix: {domain_prefix}")
+                
+                new_entities.extend([
+                    VCFDomainUpgradeButton(hass, entry, coordinator, domain_id, domain_name, domain_prefix),
+                    VCFDomainAcknowledgeAlertsButton(hass, entry, coordinator, domain_id, domain_name, domain_prefix)
+                ])
+                
+                # Mark this domain as having buttons
+                existing_domain_buttons.add(domain_id)
+            
+            if new_entities:
+                _LOGGER.info(f"Adding {len(new_entities)} buttons for initial domains")
+                entities.extend(new_entities)
+    
+    # Schedule the domain buttons creation
+    hass.async_create_task(_add_domain_buttons())
     
     async_add_entities(entities)
 
@@ -299,3 +366,172 @@ class VCFDownloadBundleButton(ButtonEntity, CoordinatorEntity):
             
         except Exception as e:
             _LOGGER.error(f"Error downloading VCF bundle: {e}")
+
+
+class VCFDomainUpgradeButton(ButtonEntity):
+    """Button to trigger VCF upgrade for a specific domain."""
+    
+    def __init__(self, hass, entry, coordinator, domain_id, domain_name, domain_prefix=None):
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
+        
+        # Entity naming with space
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} Upgrade"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_upgrade"
+        self._attr_icon = "mdi:rocket-launch"
+        
+        # Store orchestrator instance
+        self._orchestrator = None
+    
+    async def async_press(self) -> None:
+        """Handle button press to start upgrade process."""
+        try:
+            _LOGGER.info(f"Upgrade button pressed for domain: {self._domain_name}")
+            
+            # Check if there's an update available
+            domain_updates = self.coordinator.data.get("domain_updates", {})
+            domain_data = domain_updates.get(self._domain_id, {})
+            update_status = domain_data.get("update_status")
+            
+            if update_status != "updates_available":
+                _LOGGER.warning(f"No updates available for domain {self._domain_name} (status: {update_status})")
+                # You could show a persistent notification here
+                self.hass.components.persistent_notification.create(
+                    f"No VCF updates are currently available for domain '{self._domain_name}'.",
+                    title=f"VCF Upgrade - {self._domain_name}",
+                    notification_id=f"vcf_upgrade_{self._domain_id}_no_updates"
+                )
+                return
+            
+            # Get VCF URL from entry
+            vcf_url = self.entry.data.get("vcf_url")
+            if not vcf_url:
+                _LOGGER.error("No VCF URL configured")
+                return
+            
+            # Create and start orchestrator
+            from .upgrade_orchestrator import VCFUpgradeOrchestrator
+            self._orchestrator = VCFUpgradeOrchestrator(
+                self.hass, self._domain_id, self._domain_name, 
+                vcf_url, self.coordinator, self._domain_prefix
+            )
+            
+            # Store orchestrator in hass data for access by other entities
+            self.hass.data.setdefault("datacenter_assistant", {})
+            self.hass.data["datacenter_assistant"].setdefault("orchestrators", {})
+            self.hass.data["datacenter_assistant"]["orchestrators"][self._domain_id] = self._orchestrator
+            
+            # Show notification that upgrade is starting
+            self.hass.components.persistent_notification.create(
+                f"VCF upgrade process has been initiated for domain '{self._domain_name}'. "
+                f"Monitor the progress using the Update Status and Update Logs sensors.",
+                title=f"VCF Upgrade Started - {self._domain_name}",
+                notification_id=f"vcf_upgrade_{self._domain_id}_started"
+            )
+            
+            # Start upgrade process in background
+            self.hass.async_create_task(self._orchestrator.start_upgrade_process())
+            
+            # Trigger coordinator refresh to update status
+            await self.coordinator.async_refresh()
+            
+        except Exception as e:
+            _LOGGER.error(f"Error starting upgrade for domain {self._domain_name}: {e}")
+            self.hass.components.persistent_notification.create(
+                f"Failed to start VCF upgrade for domain '{self._domain_name}': {str(e)}",
+                title=f"VCF Upgrade Error - {self._domain_name}",
+                notification_id=f"vcf_upgrade_{self._domain_id}_error"
+            )
+    
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes."""
+        return {
+            "domain": self._domain_name,
+            "domain_id": self._domain_id,
+            "purpose": "Trigger VCF upgrade process"
+        }
+
+
+class VCFDomainAcknowledgeAlertsButton(ButtonEntity):
+    """Button to acknowledge alerts during VCF upgrade for a specific domain."""
+    
+    def __init__(self, hass, entry, coordinator, domain_id, domain_name, domain_prefix=None):
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
+        
+        # Entity naming with space
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} Acknowledge Alerts"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_acknowledge_alerts"
+        self._attr_icon = "mdi:alert-check"
+    
+    async def async_press(self) -> None:
+        """Handle button press to acknowledge alerts and continue upgrade."""
+        try:
+            _LOGGER.info(f"Acknowledge alerts button pressed for domain: {self._domain_name}")
+            
+            # Get orchestrator from hass data
+            orchestrators = self.hass.data.get("datacenter_assistant", {}).get("orchestrators", {})
+            orchestrator = orchestrators.get(self._domain_id)
+            
+            if not orchestrator:
+                _LOGGER.warning(f"No active upgrade process found for domain {self._domain_name}")
+                self.hass.components.persistent_notification.create(
+                    f"No active upgrade process found for domain '{self._domain_name}'. "
+                    f"Please start an upgrade first.",
+                    title=f"VCF Acknowledge Alerts - {self._domain_name}",
+                    notification_id=f"vcf_acknowledge_{self._domain_id}_no_process"
+                )
+                return
+            
+            # Check if orchestrator is in the right state
+            if orchestrator.current_status != "waiting_for_alert_acknowledgement":
+                _LOGGER.warning(f"Domain {self._domain_name} is not waiting for alert acknowledgment (status: {orchestrator.current_status})")
+                self.hass.components.persistent_notification.create(
+                    f"Domain '{self._domain_name}' is not currently waiting for alert acknowledgment. "
+                    f"Current status: {orchestrator.current_status}",
+                    title=f"VCF Acknowledge Alerts - {self._domain_name}",
+                    notification_id=f"vcf_acknowledge_{self._domain_id}_wrong_state"
+                )
+                return
+            
+            # Show notification that alerts are acknowledged
+            self.hass.components.persistent_notification.create(
+                f"Alerts have been acknowledged for domain '{self._domain_name}'. "
+                f"The upgrade process will continue.",
+                title=f"VCF Alerts Acknowledged - {self._domain_name}",
+                notification_id=f"vcf_acknowledge_{self._domain_id}_acknowledged"
+            )
+            
+            # Continue upgrade process
+            self.hass.async_create_task(orchestrator.acknowledge_alerts())
+            
+            # Trigger coordinator refresh to update status
+            await self.coordinator.async_refresh()
+            
+        except Exception as e:
+            _LOGGER.error(f"Error acknowledging alerts for domain {self._domain_name}: {e}")
+            self.hass.components.persistent_notification.create(
+                f"Failed to acknowledge alerts for domain '{self._domain_name}': {str(e)}",
+                title=f"VCF Acknowledge Error - {self._domain_name}",
+                notification_id=f"vcf_acknowledge_{self._domain_id}_error"
+            )
+    
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes."""
+        return {
+            "domain": self._domain_name,
+            "domain_id": self._domain_id,
+            "purpose": "Acknowledge alerts and continue upgrade"
+        }

@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -67,8 +67,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         
                         # Create unique entity IDs using domain prefix as per flow.txt
                         new_entities.extend([
-                            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
-                            VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
+                            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),  # Original status sensor
+                            VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix),
+                            VCFDomainUpgradeStatusSensor(coordinator, domain_id, domain_name, domain_prefix),  # New upgrade status sensor  
+                            VCFDomainUpgradeLogsSensor(coordinator, domain_id, domain_name, domain_prefix)     # New logs sensor
                         ])
                         
                         # Mark this domain as having entities
@@ -101,7 +103,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     # Create unique entity IDs using domain prefix as per flow.txt
                     new_entities.extend([
                         VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
-                        VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
+                        VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix),
+                        VCFDomainUpgradeStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
+                        VCFDomainUpgradeLogsSensor(coordinator, domain_id, domain_name, domain_prefix)
                     ])
                     
                     # Mark this domain as having entities
@@ -265,6 +269,146 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
             return {"error": str(e)}
 
 
+class VCFDomainUpgradeStatusSensor(CoordinatorEntity, SensorEntity):
+    """Sensor to track VCF upgrade status for a specific domain."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
+        
+        # Entity naming with space
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} Upgrade Status"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_upgrade_status"
+        self._attr_icon = "mdi:progress-clock"
+    
+    @property
+    def state(self):
+        """Return the current upgrade status."""
+        try:
+            # Get orchestrator status if available
+            orchestrators = self.coordinator.hass.data.get("datacenter_assistant", {}).get("orchestrators", {})
+            orchestrator = orchestrators.get(self._domain_id)
+            
+            if orchestrator:
+                return orchestrator.current_status
+            
+            # Check if the main domain status indicates upgrade started
+            domain_updates = self.coordinator.data.get("domain_updates", {})
+            domain_data = domain_updates.get(self._domain_id, {})
+            main_status = domain_data.get("update_status")
+            
+            if main_status == "update_process_started":
+                return "update_process_started"
+            
+            return "waiting_for_initiation"
+            
+        except Exception:
+            return "error"
+    
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes."""
+        try:
+            domain_updates = self.coordinator.data.get("domain_updates", {})
+            domain_data = domain_updates.get(self._domain_id, {})
+            
+            attributes = {
+                "domain": domain_data.get("domain_name"),
+                "domain_id": self._domain_id,
+                "target_version": None,
+                "last_updated": None
+            }
+            
+            # Get orchestrator info if available
+            orchestrators = self.coordinator.hass.data.get("datacenter_assistant", {}).get("orchestrators", {})
+            orchestrator = orchestrators.get(self._domain_id)
+            
+            if orchestrator:
+                attributes.update({
+                    "target_version": orchestrator.target_version,
+                    "last_updated": datetime.now().isoformat()
+                })
+            
+            return attributes
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting update status attributes for domain {self._domain_name}: {e}")
+            return {"error": str(e)}
+
+
+class VCFDomainUpgradeLogsSensor(CoordinatorEntity, SensorEntity):
+    """Sensor to track VCF upgrade logs for a specific domain."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
+        
+        # Entity naming with space
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} Update Logs"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_update_logs"  
+        self._attr_icon = "mdi:text-box-outline"
+    
+    @property
+    def state(self):
+        """Return a summary of the log status."""
+        try:
+            # Get orchestrator logs if available
+            orchestrators = self.coordinator.hass.data.get("datacenter_assistant", {}).get("orchestrators", {})
+            orchestrator = orchestrators.get(self._domain_id)
+            
+            if orchestrator and orchestrator.logs:
+                # Count log entries to give a summary
+                log_lines = orchestrator.logs.count('\n')
+                if "❌" in orchestrator.logs:
+                    return f"Logs with errors ({log_lines} lines)"
+                elif "⚠️" in orchestrator.logs:
+                    return f"Logs with warnings ({log_lines} lines)"
+                elif "✅" in orchestrator.logs:
+                    return f"Logs with success ({log_lines} lines)"
+                else:
+                    return f"Logs ({log_lines} lines)"
+            
+            return "No Messages"
+            
+        except Exception:
+            return "Error"
+    
+    @property
+    def extra_state_attributes(self):
+        """Return the full markdown logs."""
+        try:
+            # Get orchestrator logs if available
+            orchestrators = self.coordinator.hass.data.get("datacenter_assistant", {}).get("orchestrators", {})
+            orchestrator = orchestrators.get(self._domain_id)
+            
+            if orchestrator and orchestrator.logs:
+                return {
+                    "domain": self._domain_name,
+                    "domain_id": self._domain_id,
+                    "markdown_logs": orchestrator.logs,
+                    "last_updated": datetime.now().isoformat()
+                }
+            
+            return {
+                "domain": self._domain_name,
+                "domain_id": self._domain_id,
+                "markdown_logs": "## No Messages\n\nNo upgrade process has been initiated.",
+                "last_updated": None
+            }
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting update logs for domain {self._domain_name}: {e}")
+            return {"error": str(e)}
+
+
 class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
     """Sensor for individual domain update status as per flow.txt requirements."""
     
@@ -279,13 +423,17 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
         safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
         self._attr_name = f"VCF {self._domain_prefix} Status"
         self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_status"
+        self._attr_icon = "mdi:update"
 
     @property
     def icon(self):
+        """Return icon based on update status."""
         if self.state == "updates_available":
             return "mdi:update"
         elif self.state == "up_to_date":
             return "mdi:check-circle"
+        elif self.state == "update_process_started":
+            return "mdi:rocket-launch"
         else:
             return "mdi:sync-alert"
 
@@ -295,6 +443,14 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
         try:
             domain_updates = self.coordinator.data.get("domain_updates", {})
             domain_data = domain_updates.get(self._domain_id, {})
+            
+            # Check if upgrade process is started by looking at orchestrator
+            orchestrators = self.coordinator.hass.data.get("datacenter_assistant", {}).get("orchestrators", {})
+            orchestrator = orchestrators.get(self._domain_id)
+            
+            if orchestrator and orchestrator.current_status != "waiting_for_initiation":
+                return "update_process_started"
+            
             return domain_data.get("update_status", "unknown")
         except Exception:
             return "error"
@@ -318,19 +474,13 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             if next_version:
                 attributes.update({
                     "next_version": next_version.get("versionNumber"),
-                    "next_desc": truncate_description(next_version.get("versionDescription")),
-                    "next_date": next_version.get("releaseDate"),
-                    "next_vcf_bundle": next_version.get("bundlesToDownload", [])
+                    "next_vcf_bundle": truncate_description(next_version.get("description"))
                 })
-            
-            # Add error if present
-            if "error" in domain_data:
-                attributes["error"] = domain_data["error"]
             
             return attributes
             
         except Exception as e:
-            _LOGGER.error(f"Error getting domain {self._domain_name} attributes: {e}")
+            _LOGGER.error(f"Error getting domain {self._domain_name} status: {e}")
             return {"error": str(e)}
 
 
