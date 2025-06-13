@@ -27,30 +27,53 @@ async def async_setup_entry(hass, entry, async_add_entities):
         except Exception as e:
             _LOGGER.warning("VCF coordinator first refresh failed: %s", e)
 
-        # Create overall status sensors
+        # Create overall status sensors first
         entities.extend([
             VCFOverallStatusSensor(coordinator),
             VCFDomainCountSensor(coordinator),
         ])
         
-        # Create domain-specific sensors based on discovered domains
-        if coordinator.data and "domain_updates" in coordinator.data:
-            for domain_id, domain_data in coordinator.data["domain_updates"].items():
-                domain_name = domain_data.get("domain_name", "Unknown")
-                entities.extend([
-                    VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name),
-                    VCFDomainComponentsSensor(coordinator, domain_id, domain_name)
-                ])
-
-        # Store coordinator for other components
+        # Add entities initially - domain-specific ones will be added via entity registry update
+        async_add_entities(entities, True)
+        
+        # Store coordinator for dynamic entity creation
         hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
+        
+        # Schedule domain-specific entity creation after coordinator data is available
+        async def _add_domain_entities():
+            """Add domain-specific entities after data is available."""
+            await coordinator.async_request_refresh()  # Ensure we have fresh data
+            
+            if coordinator.data and "domain_updates" in coordinator.data:
+                new_entities = []
+                for domain_id, domain_data in coordinator.data["domain_updates"].items():
+                    domain_name = domain_data.get("domain_name", "Unknown")
+                    domain_prefix = domain_data.get("domain_prefix", f"domain_{domain_id[:8]}_")
+                    
+                    _LOGGER.info(f"Creating entities for domain: {domain_name} with prefix: {domain_prefix}")
+                    
+                    # Create unique entity IDs using domain prefix as per flow.txt
+                    new_entities.extend([
+                        VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
+                        VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
+                    ])
+                
+                if new_entities:
+                    _LOGGER.info(f"Adding {len(new_entities)} domain-specific entities")
+                    async_add_entities(new_entities, True)
+                else:
+                    _LOGGER.warning("No domain-specific entities to create")
+            else:
+                _LOGGER.warning("No domain update data available for entity creation")
+        
+        # Delay entity creation slightly to allow coordinator refresh to complete
+        hass.loop.call_later(2.0, lambda: hass.async_create_task(_add_domain_entities()))
 
     except Exception as e:
         _LOGGER.error("VCF sensors could not be initialized: %s", e)
         # Create empty entities list if VCF setup fails
         entities = []
-
-    async_add_entities(entities, True)
+        async_add_entities(entities, True)
 
 
 class VCFOverallStatusSensor(CoordinatorEntity, SensorEntity):
@@ -197,13 +220,17 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
 class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
     """Sensor for individual domain update status as per flow.txt requirements."""
     
-    def __init__(self, coordinator, domain_id, domain_name):
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
         super().__init__(coordinator)
         self.coordinator = coordinator
         self._domain_id = domain_id
         self._domain_name = domain_name
-        self._attr_name = f"VCF {domain_name} Updates"
-        self._attr_unique_id = f"vcf_{domain_name.lower().replace(' ', '_')}_updates"
+        self._domain_prefix = domain_prefix or f"domain_{domain_id[:8]}_"
+        
+        # Use domain prefix for entity naming as per flow.txt
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix}{domain_name} Updates"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_updates"
 
     @property
     def icon(self):
@@ -269,13 +296,17 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
 class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
     """Sensor for individual domain components that can be updated."""
     
-    def __init__(self, coordinator, domain_id, domain_name):
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
         super().__init__(coordinator)
         self.coordinator = coordinator
         self._domain_id = domain_id
         self._domain_name = domain_name
-        self._attr_name = f"VCF {domain_name} Components"
-        self._attr_unique_id = f"vcf_{domain_name.lower().replace(' ', '_')}_components"
+        self._domain_prefix = domain_prefix or f"domain_{domain_id[:8]}_"
+        
+        # Use domain prefix for entity naming as per flow.txt
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix}{domain_name} Components"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_components"
         self._attr_icon = "mdi:package-variant"
 
     @property

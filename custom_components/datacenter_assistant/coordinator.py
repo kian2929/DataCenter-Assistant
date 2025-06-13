@@ -194,16 +194,21 @@ def get_coordinator(hass, config_entry):
                             continue
                         bundles_data = await resp.json()
                     
-                    # Filter bundles with "VMware Cloud Foundation (version)" in description
+                    # Filter bundles with "VMware Cloud Foundation" in description (adjusted pattern)
                     vcf_bundles = []
                     bundles_elements = bundles_data.get("elements", [])
                     
                     import re
                     for bundle in bundles_elements:
                         description = bundle.get("description", "")
-                        # Look for "VMware Cloud Foundation" pattern as per flow.txt
-                        if re.search(r"VMware Cloud Foundation.*\(\d+\.\d+(?:\.\d+)?\)", description, re.IGNORECASE):
+                        # Look for VMware Cloud Foundation upgrade bundles - updated pattern
+                        if re.search(r"upgrade bundle for VMware Cloud Foundation \d+\.\d+(?:\.\d+)?(?:\.\d+)?", description, re.IGNORECASE):
                             vcf_bundles.append(bundle)
+                            _LOGGER.debug(f"Found VCF upgrade bundle: {description[:100]}")
+                        elif re.search(r"VMware Cloud Foundation.*\d+\.\d+(?:\.\d+)?(?:\.\d+)?", description, re.IGNORECASE):
+                            # Fallback pattern for other VCF bundle formats
+                            vcf_bundles.append(bundle)
+                            _LOGGER.debug(f"Found VCF bundle (fallback): {description[:100]}")
                     
                     # Initialize next version info
                     next_version_info = None
@@ -221,16 +226,68 @@ def get_coordinator(hass, config_entry):
                         }
                         continue
                     
-                    # Find the oldest bundle by releaseDate as per flow.txt
+                    # Find the next appropriate version to upgrade to (don't skip versions)
                     sorted_bundles = sorted(vcf_bundles, key=lambda x: x.get("releaseDate", ""))
                     if sorted_bundles:
-                        target_bundle = sorted_bundles[0]
+                        # Extract versions and sort them properly to find the next logical upgrade
+                        version_bundles = []
+                        for bundle in vcf_bundles:
+                            description = bundle.get("description", "")
+                            version_pattern = r"VMware Cloud Foundation\s+(\d+\.\d+\.\d+(?:\.\d+)?)"
+                            match = re.search(version_pattern, description, re.IGNORECASE)
+                            if match:
+                                version = match.group(1)
+                                # Normalize version to 4 parts (add .0 if missing fourth part)
+                                version_parts = version.split('.')
+                                if len(version_parts) == 3:
+                                    version = f"{version}.0"
+                                
+                                # Convert to tuple for proper version comparison
+                                version_tuple = tuple(map(int, version.split('.')))
+                                version_bundles.append((version_tuple, version, bundle))
+                        
+                        # Sort by version number (not release date) to ensure proper upgrade path
+                        version_bundles.sort(key=lambda x: x[0])
+                        
+                        # Find the next version after current version
+                        target_bundle = None
+                        target_version = None
+                        
+                        if current_version:
+                            current_parts = current_version.split('.')
+                            if len(current_parts) == 3:
+                                current_version = f"{current_version}.0"
+                            current_tuple = tuple(map(int, current_version.split('.')))
+                            
+                            # Find the first version that's higher than current
+                            for version_tuple, version_str, bundle in version_bundles:
+                                if version_tuple > current_tuple:
+                                    target_bundle = bundle
+                                    target_version = version_str
+                                    _LOGGER.info(f"Selected next upgrade version: {current_version} -> {target_version}")
+                                    break
+                        else:
+                            # If no current version, take the lowest available version
+                            if version_bundles:
+                                target_bundle = version_bundles[0][2]
+                                target_version = version_bundles[0][1]
+                                _LOGGER.info(f"No current version detected, selecting lowest available: {target_version}")
+                        
+                        if not target_bundle:
+                            # All available versions are equal or lower than current
+                            _LOGGER.debug(f"No higher version found than current {current_version}")
+                            domain_updates[domain_id] = {
+                                "domain_name": domain_name,
+                                "domain_prefix": prefix,
+                                "current_version": current_version,
+                                "update_status": "up_to_date",
+                                "next_version": None,
+                                "component_updates": {}
+                            }
+                            continue
                         
                         # Extract version info as per flow.txt variable naming
                         description = target_bundle.get("description", "")
-                        version_pattern = r"VMware Cloud Foundation.*\((\d+\.\d+(?:\.\d+)?)\)"
-                        match = re.search(version_pattern, description, re.IGNORECASE)
-                        target_version = match.group(1) if match else "Unknown"
                         
                         next_version_info = {
                             "versionDescription": description,  # nextVersion_versionDescription
@@ -239,6 +296,19 @@ def get_coordinator(hass, config_entry):
                             "bundleId": target_bundle.get("id"),
                             "bundlesToDownload": [target_bundle.get("id")]  # nextVersion_bundlesToDownload
                         }
+                        
+                        # Also collect configuration drift bundle if available for this version
+                        # This will be needed for the actual upgrade process (TBD)
+                        config_drift_bundles = []
+                        for bundle in vcf_bundles:
+                            desc = bundle.get("description", "")
+                            if "configuration drift bundle" in desc.lower() and target_version in desc:
+                                config_drift_bundles.append(bundle.get("id"))
+                                _LOGGER.debug(f"Found config drift bundle for {target_version}: {bundle.get('id')}")
+                        
+                        if config_drift_bundles:
+                            next_version_info["bundlesToDownload"].extend(config_drift_bundles)
+                            next_version_info["configDriftBundles"] = config_drift_bundles
                         
                         # Check if SDDC_MANAGER component needs update
                         components = target_bundle.get("components", [])
@@ -297,8 +367,49 @@ def get_coordinator(hass, config_entry):
                                                     "version": bundle_detail.get("version", ""),
                                                     "componentType": component_type
                                                 }
+                            elif resp.status == 500:
+                                # Handle API error - try to get component info from the bundle itself
+                                error_text = await resp.text()
+                                _LOGGER.warning(f"Upgradables API returned 500 for domain {domain_name}, version {next_version_info['versionNumber']}: {error_text}")
+                                
+                                # Try to get component information from the target bundle
+                                bundle_detail_url = f"{vcf_url}/v1/bundles/{next_version_info['bundleId']}"
+                                async with session.get(bundle_detail_url, headers=headers, ssl=False) as bundle_resp:
+                                    if bundle_resp.status == 200:
+                                        bundle_detail = await bundle_resp.json()
+                                        components = bundle_detail.get("components", [])
+                                        
+                                        if components:
+                                            _LOGGER.debug(f"Found {len(components)} components in bundle")
+                                            for i, comp in enumerate(components):
+                                                comp_type = comp.get("type", "Unknown")
+                                                comp_version = comp.get("toVersion", comp.get("version", ""))
+                                                
+                                                component_updates[f"componentUpdate{i+1}"] = {
+                                                    "id": next_version_info['bundleId'],
+                                                    "description": f"{comp_type} upgrade to {comp_version}",
+                                                    "version": comp_version,
+                                                    "componentType": comp_type
+                                                }
+                                        else:
+                                            # Fallback: create a generic component update entry
+                                            component_updates["componentUpdate1"] = {
+                                                "id": next_version_info['bundleId'],
+                                                "description": f"VCF {next_version_info['versionNumber']} upgrade",
+                                                "version": next_version_info['versionNumber'],
+                                                "componentType": "VCF_UPGRADE"
+                                            }
                             else:
-                                _LOGGER.warning(f"Failed to get upgradables for domain {domain_name}: {resp.status}")
+                                error_text = await resp.text()
+                                _LOGGER.warning(f"Failed to get upgradables for domain {domain_name}: {resp.status} - {error_text}")
+                                
+                                # Create a fallback component entry when API fails
+                                component_updates["componentUpdate1"] = {
+                                    "id": next_version_info['bundleId'],
+                                    "description": f"VCF {next_version_info['versionNumber']} upgrade (details unavailable)",
+                                    "version": next_version_info['versionNumber'],
+                                    "componentType": "VCF_UPGRADE"
+                                }
                     
                     # Determine final update status
                     update_status = "updates_available" if next_version_info else "up_to_date"
