@@ -400,11 +400,15 @@ class VCFDomainUpgradeButton(ButtonEntity):
             
             if update_status != "updates_available":
                 _LOGGER.warning(f"No updates available for domain {self._domain_name} (status: {update_status})")
-                # You could show a persistent notification here
-                self.hass.components.persistent_notification.create(
-                    f"No VCF updates are currently available for domain '{self._domain_name}'.",
-                    title=f"VCF Upgrade - {self._domain_name}",
-                    notification_id=f"vcf_upgrade_{self._domain_id}_no_updates"
+                # Show persistent notification
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "message": f"No VCF updates are currently available for domain '{self._domain_name}'.",
+                        "title": f"VCF Upgrade - {self._domain_name}",
+                        "notification_id": f"vcf_upgrade_{self._domain_id}_no_updates"
+                    }
                 )
                 return
             
@@ -427,11 +431,15 @@ class VCFDomainUpgradeButton(ButtonEntity):
             self.hass.data["datacenter_assistant"]["orchestrators"][self._domain_id] = self._orchestrator
             
             # Show notification that upgrade is starting
-            self.hass.components.persistent_notification.create(
-                f"VCF upgrade process has been initiated for domain '{self._domain_name}'. "
-                f"Monitor the progress using the Update Status and Update Logs sensors.",
-                title=f"VCF Upgrade Started - {self._domain_name}",
-                notification_id=f"vcf_upgrade_{self._domain_id}_started"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"VCF upgrade process has been initiated for domain '{self._domain_name}'. "
+                              f"Monitor the progress using the Update Status and Update Logs sensors.",
+                    "title": f"VCF Upgrade Started - {self._domain_name}",
+                    "notification_id": f"vcf_upgrade_{self._domain_id}_started"
+                }
             )
             
             # Start upgrade process in background
@@ -442,10 +450,14 @@ class VCFDomainUpgradeButton(ButtonEntity):
             
         except Exception as e:
             _LOGGER.error(f"Error starting upgrade for domain {self._domain_name}: {e}")
-            self.hass.components.persistent_notification.create(
-                f"Failed to start VCF upgrade for domain '{self._domain_name}': {str(e)}",
-                title=f"VCF Upgrade Error - {self._domain_name}",
-                notification_id=f"vcf_upgrade_{self._domain_id}_error"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"Failed to start VCF upgrade for domain '{self._domain_name}': {str(e)}",
+                    "title": f"VCF Upgrade Error - {self._domain_name}",
+                    "notification_id": f"vcf_upgrade_{self._domain_id}_error"
+                }
             )
     
     @property
@@ -486,31 +498,43 @@ class VCFDomainAcknowledgeAlertsButton(ButtonEntity):
             
             if not orchestrator:
                 _LOGGER.warning(f"No active upgrade process found for domain {self._domain_name}")
-                self.hass.components.persistent_notification.create(
-                    f"No active upgrade process found for domain '{self._domain_name}'. "
-                    f"Please start an upgrade first.",
-                    title=f"VCF Acknowledge Alerts - {self._domain_name}",
-                    notification_id=f"vcf_acknowledge_{self._domain_id}_no_process"
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "message": f"No active upgrade process found for domain '{self._domain_name}'. "
+                                  f"Please start an upgrade first.",
+                        "title": f"VCF Acknowledge Alerts - {self._domain_name}",
+                        "notification_id": f"vcf_acknowledge_{self._domain_id}_no_process"
+                    }
                 )
                 return
             
             # Check if orchestrator is in the right state
             if orchestrator.current_status != "waiting_for_alert_acknowledgement":
                 _LOGGER.warning(f"Domain {self._domain_name} is not waiting for alert acknowledgment (status: {orchestrator.current_status})")
-                self.hass.components.persistent_notification.create(
-                    f"Domain '{self._domain_name}' is not currently waiting for alert acknowledgment. "
-                    f"Current status: {orchestrator.current_status}",
-                    title=f"VCF Acknowledge Alerts - {self._domain_name}",
-                    notification_id=f"vcf_acknowledge_{self._domain_id}_wrong_state"
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "message": f"Domain '{self._domain_name}' is not currently waiting for alert acknowledgment. "
+                                  f"Current status: {orchestrator.current_status}",
+                        "title": f"VCF Acknowledge Alerts - {self._domain_name}",
+                        "notification_id": f"vcf_acknowledge_{self._domain_id}_wrong_state"
+                    }
                 )
                 return
             
             # Show notification that alerts are acknowledged
-            self.hass.components.persistent_notification.create(
-                f"Alerts have been acknowledged for domain '{self._domain_name}'. "
-                f"The upgrade process will continue.",
-                title=f"VCF Alerts Acknowledged - {self._domain_name}",
-                notification_id=f"vcf_acknowledge_{self._domain_id}_acknowledged"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"Alerts have been acknowledged for domain '{self._domain_name}'. "
+                              f"The upgrade process will continue.",
+                    "title": f"VCF Alerts Acknowledged - {self._domain_name}",
+                    "notification_id": f"vcf_acknowledge_{self._domain_id}_acknowledged"
+                }
             )
             
             # Continue upgrade process
@@ -521,10 +545,14 @@ class VCFDomainAcknowledgeAlertsButton(ButtonEntity):
             
         except Exception as e:
             _LOGGER.error(f"Error acknowledging alerts for domain {self._domain_name}: {e}")
-            self.hass.components.persistent_notification.create(
-                f"Failed to acknowledge alerts for domain '{self._domain_name}': {str(e)}",
-                title=f"VCF Acknowledge Error - {self._domain_name}",
-                notification_id=f"vcf_acknowledge_{self._domain_id}_error"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"Failed to acknowledge alerts for domain '{self._domain_name}': {str(e)}",
+                    "title": f"VCF Acknowledge Error - {self._domain_name}",
+                    "notification_id": f"vcf_acknowledge_{self._domain_id}_error"
+                }
             )
     
     @property
