@@ -1,12 +1,13 @@
 import logging
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorDeviceClass
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up binary sensors for VCF upgrade availability."""
+    """Set up binary sensors for VCF system status."""
     try:
         # Get or create coordinator
         coordinator = hass.data.get("datacenter_assistant", {}).get("coordinator")
@@ -16,50 +17,133 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             hass.data.setdefault("datacenter_assistant", {})["coordinator"] = coordinator
             
         await coordinator.async_config_entry_first_refresh()
-        entity = VCFUpgradeBinarySensor(coordinator)
-        async_add_entities([entity], True)
+        
+        # Create binary sensors
+        entities = [
+            VCFConnectionBinarySensor(coordinator),
+            VCFUpdatesAvailableBinarySensor(coordinator)
+        ]
+        
+        async_add_entities(entities, True)
     except Exception as e:
-        _LOGGER.warning("Could not set up VCF binary sensor: %s", e)
+        _LOGGER.warning("Could not set up VCF binary sensors: %s", e)
 
 
-class VCFUpgradeBinarySensor(BinarySensorEntity):
-    """Binary sensor to indicate if a VCF upgrade is available."""
+class VCFConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor to indicate VCF connection status."""
 
     def __init__(self, coordinator):
+        super().__init__(coordinator)
         self.coordinator = coordinator
-        self._attr_name = "VCF Upgrades Available"
-        self._attr_unique_id = "vcf_upgrades_available"
+        self._attr_name = "VCF Connection"
+        self._attr_unique_id = "vcf_connection"
+        self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+        self._attr_icon = "mdi:server-network"
 
     @property
     def is_on(self):
+        """Return True if VCF is connected and domains are available."""
         try:
-            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
-            return any(b.get("status") == "AVAILABLE" for b in data)
+            if self.coordinator.data is None:
+                return False
+                
+            # Check if we have domain data and no setup failed
+            domains = self.coordinator.data.get("domains", [])
+            setup_failed = self.coordinator.data.get("setup_failed", False)
+            
+            return len(domains) > 0 and not setup_failed
         except Exception as e:
-            _LOGGER.warning("Failed to check VCF upgrade availability: %s", e)
+            _LOGGER.warning("Failed to check VCF connection: %s", e)
             return False
-
-    @property
-    def available(self):
-        try:
-            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
-            return bool(data)
-        except Exception as e:
-            _LOGGER.warning("VCF BinarySensor not available: %s", e)
-            return False
-        
-        
 
     @property
     def extra_state_attributes(self):
+        """Return additional attributes."""
         try:
-            data = self.coordinator.data.get("upgradable_data", {}).get("elements", [])
+            if not self.coordinator.data:
+                return {"error": "No data available"}
+                
+            domains = self.coordinator.data.get("domains", [])
+            setup_failed = self.coordinator.data.get("setup_failed", False)
+            
             return {
-                "raw_statuses": [x.get("status") for x in data],
-                "connected": True if data else False
+                "domain_count": len(domains),
+                "setup_failed": setup_failed,
+                "last_update": self.coordinator.last_update_success,
+                "error": self.coordinator.data.get("error") if self.coordinator.data else None
             }
         except Exception as e:
-            return {
-                "connected": False,
-                "error": str(e)
+            return {"error": str(e)}
+
+
+class VCFUpdatesAvailableBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor to indicate if any VCF updates are available across all domains."""
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._attr_name = "VCF Updates Available"
+        self._attr_unique_id = "vcf_updates_available"
+        self._attr_device_class = BinarySensorDeviceClass.UPDATE
+        self._attr_icon = "mdi:update"
+
+    @property
+    def is_on(self):
+        """Return True if any domain has updates available."""
+        try:
+            if not self.coordinator.data:
+                return False
+                
+            domain_updates = self.coordinator.data.get("domain_updates", {})
+            
+            # Check if any domain has updates available
+            for domain_data in domain_updates.values():
+                if domain_data.get("update_status") == "updates_available":
+                    return True
+                    
+            return False
+        except Exception as e:
+            _LOGGER.warning("Failed to check VCF update availability: %s", e)
+            return False
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes about available updates."""
+        try:
+            if not self.coordinator.data:
+                return {"error": "No data available"}
+                
+            domain_updates = self.coordinator.data.get("domain_updates", {})
+            
+            # Count domains by status
+            status_counts = {
+                "updates_available": 0,
+                "up_to_date": 0,
+                "error": 0,
+                "unknown": 0
             }
+            
+            domains_with_updates = []
+            
+            for domain_id, domain_data in domain_updates.items():
+                status = domain_data.get("update_status", "unknown")
+                status_counts[status] = status_counts.get(status, 0) + 1
+                
+                if status == "updates_available":
+                    next_version = domain_data.get("next_version", {})
+                    domains_with_updates.append({
+                        "domain_name": domain_data.get("domain_name"),
+                        "current_version": domain_data.get("current_version"),
+                        "next_version": next_version.get("versionNumber"),
+                        "component_count": len(domain_data.get("component_updates", {}))
+                    })
+            
+            return {
+                "total_domains": len(domain_updates),
+                "domains_with_updates": status_counts["updates_available"],
+                "domains_up_to_date": status_counts["up_to_date"],
+                "domains_with_errors": status_counts["error"],
+                "update_details": domains_with_updates
+            }
+        except Exception as e:
+            return {"error": str(e)}

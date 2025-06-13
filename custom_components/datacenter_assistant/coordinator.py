@@ -67,8 +67,8 @@ def get_coordinator(hass, config_entry):
             return None
 
     async def async_fetch_upgrades():
-        """Fetch VCF domain and update information following the proper workflow."""
-        _LOGGER.debug("VCF Coordinator refreshing domain and update data")
+        """Fetch VCF domain and update information following the proper workflow from flow.txt."""
+        _LOGGER.debug("VCF Coordinator refreshing domain and update data - following workflow")
         
         # Check if VCF is configured
         if not vcf_url:
@@ -94,8 +94,8 @@ def get_coordinator(hass, config_entry):
         }
         
         try:
-            # Step 1: Get domains
-            _LOGGER.debug("Step 1: Getting domains")
+            # Step 1: Get Domain Information - only consider ACTIVE domains
+            _LOGGER.debug("Step 1: Getting domains (only ACTIVE)")
             domains_url = f"{vcf_url}/v1/domains"
             
             async with session.get(domains_url, headers=headers, ssl=False) as resp:
@@ -118,25 +118,29 @@ def get_coordinator(hass, config_entry):
                 else:
                     domains_data = await resp.json()
             
-            # Extract active domains
+            # Extract active domains with prefixed variables as per flow.txt
             active_domains = []
+            domain_counter = 1
             domain_elements = domains_data.get("elements", [])
             
             for domain in domain_elements:
                 if domain.get("status") == "ACTIVE":
-                    active_domains.append({
+                    domain_info = {
                         "id": domain.get("id"),
                         "name": domain.get("name"),
-                        "status": domain.get("status")
-                    })
-                    _LOGGER.debug(f"Found active domain: {domain.get('name')} ({domain.get('id')})")
+                        "status": domain.get("status"),
+                        "prefix": f"domain{domain_counter}_"
+                    }
+                    active_domains.append(domain_info)
+                    _LOGGER.debug(f"Found active domain{domain_counter}_: {domain.get('name')} ({domain.get('id')})")
+                    domain_counter += 1
             
             if not active_domains:
-                _LOGGER.warning("No active domains found")
-                return {"domains": [], "domain_updates": {}}
+                _LOGGER.warning("No active domains found - failing setup as per flow.txt")
+                return {"domains": [], "domain_updates": {}, "setup_failed": True}
             
-            # Step 2: Get SDDC managers for each domain
-            _LOGGER.debug("Step 2: Getting SDDC managers")
+            # Step 2: Get SDDC Manager Information
+            _LOGGER.debug("Step 2: Getting SDDC managers to match with domains")
             sddc_managers_url = f"{vcf_url}/v1/sddc-managers"
             
             async with session.get(sddc_managers_url, headers=headers, ssl=False) as resp:
@@ -151,18 +155,22 @@ def get_coordinator(hass, config_entry):
                     if sddc.get("domain", {}).get("id") == domain["id"]:
                         domain["sddc_manager_id"] = sddc.get("id")
                         domain["sddc_manager_fqdn"] = sddc.get("fqdn")
+                        domain["sddc_manager_version"] = sddc.get("version")
+                        _LOGGER.debug(f"Mapped SDDC Manager {sddc.get('fqdn')} to domain {domain['name']}")
                         break
             
-            # Step 3: For each domain, check for updates
-            _LOGGER.debug("Step 3: Checking for updates per domain")
+            # Step 3: For each domain, follow the update checking workflow
+            _LOGGER.debug("Step 3: Checking for updates per domain following flow.txt workflow")
             domain_updates = {}
             
             for domain in active_domains:
                 domain_id = domain["id"]
                 domain_name = domain["name"]
+                prefix = domain["prefix"]
                 
                 try:
                     # Get current VCF version for this domain
+                    _LOGGER.debug(f"Getting current VCF version for domain {domain_name}")
                     releases_url = f"{vcf_url}/v1/releases"
                     params = {"domainId": domain_id}
                     
@@ -176,7 +184,8 @@ def get_coordinator(hass, config_entry):
                     if releases_data.get("elements"):
                         current_version = releases_data["elements"][0].get("version")
                     
-                    # Get available bundles
+                    # Get bundles to find VCF updates (as per flow.txt)
+                    _LOGGER.debug(f"Getting bundles for VCF updates for domain {domain_name}")
                     bundles_url = f"{vcf_url}/v1/bundles"
                     
                     async with session.get(bundles_url, headers=headers, ssl=False) as resp:
@@ -185,44 +194,84 @@ def get_coordinator(hass, config_entry):
                             continue
                         bundles_data = await resp.json()
                     
-                    # Filter bundles for VMware Cloud Foundation updates
+                    # Filter bundles with "VMware Cloud Foundation (version)" in description
                     vcf_bundles = []
                     bundles_elements = bundles_data.get("elements", [])
                     
+                    import re
                     for bundle in bundles_elements:
                         description = bundle.get("description", "")
-                        if "VMware Cloud Foundation" in description:
+                        # Look for "VMware Cloud Foundation" pattern as per flow.txt
+                        if re.search(r"VMware Cloud Foundation.*\(\d+\.\d+(?:\.\d+)?\)", description, re.IGNORECASE):
                             vcf_bundles.append(bundle)
                     
-                    # Find the latest available update
+                    # Initialize next version info
                     next_version_info = None
-                    if vcf_bundles:
-                        # Sort by release date, get the oldest one (as per flow.txt)
-                        sorted_bundles = sorted(vcf_bundles, key=lambda x: x.get("releaseDate", ""))
-                        if sorted_bundles:
-                            latest_bundle = sorted_bundles[0]
-                            
-                            # Extract version from description
-                            description = latest_bundle.get("description", "")
-                            version_match = None
-                            # Try to extract version number from description
-                            import re
-                            version_pattern = r'VMware Cloud Foundation[^\d]*(\d+\.\d+(?:\.\d+)?)'
-                            match = re.search(version_pattern, description)
-                            if match:
-                                version_match = match.group(1)
-                            
-                            next_version_info = {
-                                "versionDescription": description,
-                                "versionNumber": version_match or "Unknown",
-                                "releaseDate": latest_bundle.get("releaseDate"),
-                                "bundleId": latest_bundle.get("id"),
-                                "bundlesToDownload": [latest_bundle.get("id")]
-                            }
                     
-                    # Check upgradable components for this domain
+                    if not vcf_bundles:
+                        # No VCF bundles found - report "up to date" as per flow.txt
+                        _LOGGER.debug(f"No VCF update bundles found for domain {domain_name} - reporting up to date")
+                        domain_updates[domain_id] = {
+                            "domain_name": domain_name,
+                            "domain_prefix": prefix,
+                            "current_version": current_version,
+                            "update_status": "up_to_date",
+                            "next_version": None,
+                            "component_updates": {}
+                        }
+                        continue
+                    
+                    # Find the oldest bundle by releaseDate as per flow.txt
+                    sorted_bundles = sorted(vcf_bundles, key=lambda x: x.get("releaseDate", ""))
+                    if sorted_bundles:
+                        target_bundle = sorted_bundles[0]
+                        
+                        # Extract version info as per flow.txt variable naming
+                        description = target_bundle.get("description", "")
+                        version_pattern = r"VMware Cloud Foundation.*\((\d+\.\d+(?:\.\d+)?)\)"
+                        match = re.search(version_pattern, description, re.IGNORECASE)
+                        target_version = match.group(1) if match else "Unknown"
+                        
+                        next_version_info = {
+                            "versionDescription": description,  # nextVersion_versionDescription
+                            "versionNumber": target_version,     # nextVersion_versionNumber
+                            "releaseDate": target_bundle.get("releaseDate"),  # nextVersion_releaseDate
+                            "bundleId": target_bundle.get("id"),
+                            "bundlesToDownload": [target_bundle.get("id")]  # nextVersion_bundlesToDownload
+                        }
+                        
+                        # Check if SDDC_MANAGER component needs update
+                        components = target_bundle.get("components", [])
+                        sddc_component = None
+                        for comp in components:
+                            if comp.get("type") == "SDDC_MANAGER":
+                                sddc_component = comp
+                                break
+                        
+                        # Check if update is actually needed by comparing versions
+                        update_needed = True
+                        if sddc_component and current_version:
+                            to_version = sddc_component.get("toVersion")
+                            if to_version and current_version:
+                                # Simple version comparison - you might want to enhance this
+                                update_needed = to_version != current_version
+                        
+                        if not update_needed:
+                            _LOGGER.debug(f"SDDC Manager version check shows no update needed for {domain_name}")
+                            domain_updates[domain_id] = {
+                                "domain_name": domain_name,
+                                "domain_prefix": prefix,
+                                "current_version": current_version,
+                                "update_status": "up_to_date",
+                                "next_version": None,
+                                "component_updates": {}
+                            }
+                            continue
+                    
+                    # Get upgradable components for this domain with target version
                     component_updates = {}
                     if next_version_info and next_version_info["versionNumber"] != "Unknown":
+                        _LOGGER.debug(f"Getting upgradables for domain {domain_name} with target version {next_version_info['versionNumber']}")
                         upgradables_url = f"{vcf_url}/v1/upgradables/domains/{domain_id}"
                         params = {"targetVersion": next_version_info["versionNumber"]}
                         
@@ -230,46 +279,48 @@ def get_coordinator(hass, config_entry):
                             if resp.status == 200:
                                 upgradables_data = await resp.json()
                                 
-                                # Get component details
+                                # Get component details for each component bundle
                                 for component in upgradables_data.get("elements", []):
                                     component_bundle_id = component.get("bundleId")
+                                    component_type = component.get("componentType", "Unknown")
+                                    
                                     if component_bundle_id:
                                         bundle_detail_url = f"{vcf_url}/v1/bundles/{component_bundle_id}"
                                         
                                         async with session.get(bundle_detail_url, headers=headers, ssl=False) as bundle_resp:
                                             if bundle_resp.status == 200:
                                                 bundle_detail = await bundle_resp.json()
-                                                component_name = component.get("componentType", "Unknown")
-                                                component_updates[component_name] = {
+                                                # Store component update info as per flow.txt format
+                                                component_updates[f"componentUpdate{len(component_updates)+1}"] = {
                                                     "id": component_bundle_id,
                                                     "description": bundle_detail.get("description", ""),
-                                                    "version": bundle_detail.get("version", "")
+                                                    "version": bundle_detail.get("version", ""),
+                                                    "componentType": component_type
                                                 }
+                            else:
+                                _LOGGER.warning(f"Failed to get upgradables for domain {domain_name}: {resp.status}")
                     
-                    # Determine update status
-                    update_status = "up_to_date"
-                    if next_version_info:
-                        if current_version and next_version_info["versionNumber"] != "Unknown":
-                            # Simple version comparison (you might want to improve this)
-                            if next_version_info["versionNumber"] != current_version:
-                                update_status = "updates_available"
-                        else:
-                            update_status = "updates_available"
+                    # Determine final update status
+                    update_status = "updates_available" if next_version_info else "up_to_date"
                     
                     domain_updates[domain_id] = {
                         "domain_name": domain_name,
+                        "domain_prefix": prefix,
                         "current_version": current_version,
                         "update_status": update_status,
                         "next_version": next_version_info,
                         "component_updates": component_updates
                     }
                     
-                    _LOGGER.debug(f"Domain {domain_name} update status: {update_status}")
+                    _LOGGER.info(f"Domain {domain_name} update status: {update_status}")
+                    if next_version_info:
+                        _LOGGER.info(f"Next VCF version available: {next_version_info['versionNumber']}")
                     
                 except Exception as e:
                     _LOGGER.error(f"Error checking updates for domain {domain_name}: {e}")
                     domain_updates[domain_id] = {
                         "domain_name": domain_name,
+                        "domain_prefix": prefix,
                         "current_version": None,
                         "update_status": "error",
                         "error": str(e),

@@ -3,7 +3,7 @@ import asyncio
 import voluptuous as vol
 import time
 from homeassistant.components.button import ButtonEntity
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -24,6 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     entities = [
         VCFRefreshTokenButton(hass, entry),
+        VCFManualUpdateCheckButton(hass, entry, coordinator),
         VCFExecuteUpdatesButton(hass, entry, coordinator),
         VCFDownloadBundleButton(hass, entry, coordinator)
     ]
@@ -98,6 +99,30 @@ class VCFRefreshTokenButton(ButtonEntity):
                     
         except Exception as e:
             _LOGGER.error(f"Error refreshing VCF token: {e}")
+
+
+class VCFManualUpdateCheckButton(ButtonEntity, CoordinatorEntity):
+    """Button to manually trigger VCF update check process as per flow.txt."""
+    
+    def __init__(self, hass, entry, coordinator):
+        super().__init__(coordinator)
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self._attr_name = "VCF Manual Update Check"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_manual_update_check"
+        self._attr_icon = "mdi:magnify"
+    
+    async def async_press(self) -> None:
+        """Handle button press to manually trigger update check."""
+        _LOGGER.info("Manually triggering VCF update check process")
+        
+        try:
+            # Force coordinator refresh to run the update check workflow
+            await self.coordinator.async_refresh()
+            _LOGGER.info("VCF update check process completed successfully")
+        except Exception as e:
+            _LOGGER.error(f"Error during manual VCF update check: {e}")
 
 
 class VCFExecuteUpdatesButton(ButtonEntity, CoordinatorEntity):
