@@ -62,25 +62,24 @@ def get_coordinator(hass, config_entry):
                 else:
                     _LOGGER.warning(f"Could not extract token from response")
                     return None
-                    
         except Exception as e:
             _LOGGER.error(f"Error refreshing VCF token: {e}")
             return None
 
     async def async_fetch_upgrades():
-        """Fetch VCF bundle information."""
-        _LOGGER.debug("VCF Coordinator refreshing bundle data")
+        """Fetch VCF domain and update information following the proper workflow."""
+        _LOGGER.debug("VCF Coordinator refreshing domain and update data")
         
-        # Prüfe, ob VCF konfiguriert ist
+        # Check if VCF is configured
         if not vcf_url:
             _LOGGER.warning("VCF not configured with URL")
-            return {"bundle_data": {"elements": []}}
+            return {"domains": [], "domain_updates": {}}
 
         current_token = config_entry.data.get("vcf_token")
         current_expiry = config_entry.data.get("token_expiry", 0)
         
-        # Prüfen, ob das Token in weniger als 10 Minuten abläuft
-        if current_expiry > 0 and time.time() > current_expiry - 600:  # 10 Minuten vor Ablauf
+        # Check if token expires in less than 10 minutes
+        if current_expiry > 0 and time.time() > current_expiry - 600:
             _LOGGER.info("VCF token will expire soon, refreshing proactively")
             new_token = await refresh_vcf_token()
             if new_token:
@@ -88,116 +87,204 @@ def get_coordinator(hass, config_entry):
             else:
                 _LOGGER.warning("Failed to refresh token proactively")
         
-        # API-ABRUF mit Retry-Mechanismus
-        max_retries = 3
-        retry_delay = 5  # Sekunden
-        last_exception = None
+        session = async_get_clientsession(hass)
+        headers = {
+            "Authorization": f"Bearer {current_token}",
+            "Accept": "application/json"
+        }
         
-        for attempt in range(max_retries):
-            try:
-                session = async_get_clientsession(hass)
-                # Neuer Endpunkt für Bundle-Management
-                api_url = f"{vcf_url}/v1/bundles"
-                
-                headers = {
-                    "Authorization": f"Bearer {current_token}",
-                    "Accept": "application/json"
-                }
-                
-                # Bei Wiederholungsversuch eine Nachricht ausgeben
-                if attempt > 0:
-                    _LOGGER.info(f"Retry attempt {attempt+1}/{max_retries} for VCF Bundles API")
-                
-                # Parameter für die Filterung
-                params = {
-                    "isCompliant": "true",  # Nur kompatible Bundles anzeigen
-                    "productType": "vcf"     # Auf VCF-Produkte filtern
-                }
-                
-                async with session.get(api_url, headers=headers, params=params, ssl=False) as resp:
-                    if resp.status == 401:  # Token abgelaufen
-                        _LOGGER.info("VCF token expired, refreshing...")
-                        
-                        new_token = await refresh_vcf_token()
-                        if new_token:
-                            headers["Authorization"] = f"Bearer {new_token}"
-                            _LOGGER.debug("Retrying with new token")
-                            
-                            async with session.get(api_url, headers=headers, params=params, ssl=False) as retry_resp:
-                                if retry_resp.status != 200:
-                                    _LOGGER.error(f"VCF Bundles API retry failed: {retry_resp.status}")
-                                    # Bei Fehler nach Token-Erneuerung weiter wiederholen
-                                    raise aiohttp.ClientError(f"API returned status {retry_resp.status} after token refresh")
-                                
-                                raw_data = await retry_resp.json()
-                        else:
-                            _LOGGER.warning("Failed to refresh token")
-                            raise aiohttp.ClientError("Failed to refresh token")
-                    elif resp.status != 200:
-                        _LOGGER.error(f"VCF Bundles API error: {resp.status}")
-                        raise aiohttp.ClientError(f"API returned status {resp.status}")
+        try:
+            # Step 1: Get domains
+            _LOGGER.debug("Step 1: Getting domains")
+            domains_url = f"{vcf_url}/v1/domains"
+            
+            async with session.get(domains_url, headers=headers, ssl=False) as resp:
+                if resp.status == 401:
+                    _LOGGER.info("Token expired, refreshing...")
+                    new_token = await refresh_vcf_token()
+                    if new_token:
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        current_token = new_token
                     else:
-                        raw_data = await resp.json()
-                        _LOGGER.debug(f"VCF Bundles API success, response: {raw_data}")
-                    
-                    # Normalisierung der Datenstruktur für Bundles
-                    bundles_data = {"elements": []}
-                    
-                    # PageOfBundle Struktur verarbeiten
-                    if isinstance(raw_data, dict):
-                        if "elements" in raw_data:
-                            bundles_list = raw_data["elements"]
-                        elif "content" in raw_data:
-                            bundles_list = raw_data["content"]
-                        elif "bundles" in raw_data:
-                            bundles_list = raw_data["bundles"]
-                        elif "items" in raw_data:
-                            bundles_list = raw_data["items"]
-                        else:
-                            bundles_list = []
-                            _LOGGER.warning(f"Unbekannte Antwortstruktur: {raw_data.keys()}")
-                    elif isinstance(raw_data, list):
-                        bundles_list = raw_data
-                    else:
-                        bundles_list = []
-                        _LOGGER.warning(f"Unerwarteter Antworttyp: {type(raw_data)}")
-                    
-                    # Filter nach "VMware Cloud Foundation" in der Beschreibung
-                    filtered_bundles = []
-                    for bundle in bundles_list:
-                        description = bundle.get("description", "").lower()
-                        name = bundle.get("name", "").lower()
+                        raise aiohttp.ClientError("Failed to refresh token")
                         
-                        if "vmware cloud foundation" in description:
-                            filtered_bundles.append(bundle)
-                            _LOGGER.debug(f"VCF Bundle gefunden: {bundle.get('name')}")
-                        elif "vcf" in name:
-                            filtered_bundles.append(bundle)
-                            _LOGGER.debug(f"VCF Bundle gefunden (via Name): {bundle.get('name')}")
-                    
-                    bundles_data["elements"] = filtered_bundles
-                    
-                    # Erfolgreicher Aufruf, Return hier
-                    return {"bundle_data": bundles_data, "upgradable_data": {"elements": []}}
-                
-            except aiohttp.ClientError as e:
-                last_exception = e
-                _LOGGER.warning(f"VCF connection error (attempt {attempt+1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    # Exponentielles Backoff für Wiederholungen
-                    wait_time = retry_delay * (2 ** attempt)  # 5, 10, 20 Sekunden
-                    _LOGGER.info(f"Waiting {wait_time} seconds before retry...")
-                    await asyncio.sleep(wait_time)
+                    # Retry with new token
+                    async with session.get(domains_url, headers=headers, ssl=False) as retry_resp:
+                        if retry_resp.status != 200:
+                            raise aiohttp.ClientError(f"Domains API failed: {retry_resp.status}")
+                        domains_data = await retry_resp.json()
+                elif resp.status != 200:
+                    raise aiohttp.ClientError(f"Domains API failed: {resp.status}")
                 else:
-                    _LOGGER.error(f"VCF connection failed after {max_retries} attempts: {e}")
-            except Exception as e:
-                _LOGGER.error(f"Unexpected error fetching VCF bundle data: {e}")
-                last_exception = e
-                break  # Bei unerwarteten Fehlern nicht wiederholen
-          # Wenn wir hier ankommen, waren alle Versuche erfolglos
-        _LOGGER.error(f"All {max_retries} attempts failed. Last error: {last_exception}")
-        # Return empty data instead of raising exception to prevent integration from becoming unavailable
-        return {"bundle_data": {"elements": []}, "upgradable_data": {"elements": []}}
+                    domains_data = await resp.json()
+            
+            # Extract active domains
+            active_domains = []
+            domain_elements = domains_data.get("elements", [])
+            
+            for domain in domain_elements:
+                if domain.get("status") == "ACTIVE":
+                    active_domains.append({
+                        "id": domain.get("id"),
+                        "name": domain.get("name"),
+                        "status": domain.get("status")
+                    })
+                    _LOGGER.debug(f"Found active domain: {domain.get('name')} ({domain.get('id')})")
+            
+            if not active_domains:
+                _LOGGER.warning("No active domains found")
+                return {"domains": [], "domain_updates": {}}
+            
+            # Step 2: Get SDDC managers for each domain
+            _LOGGER.debug("Step 2: Getting SDDC managers")
+            sddc_managers_url = f"{vcf_url}/v1/sddc-managers"
+            
+            async with session.get(sddc_managers_url, headers=headers, ssl=False) as resp:
+                if resp.status != 200:
+                    raise aiohttp.ClientError(f"SDDC Managers API failed: {resp.status}")
+                sddc_data = await resp.json()
+            
+            # Map SDDC managers to domains
+            sddc_elements = sddc_data.get("elements", [])
+            for domain in active_domains:
+                for sddc in sddc_elements:
+                    if sddc.get("domain", {}).get("id") == domain["id"]:
+                        domain["sddc_manager_id"] = sddc.get("id")
+                        domain["sddc_manager_fqdn"] = sddc.get("fqdn")
+                        break
+            
+            # Step 3: For each domain, check for updates
+            _LOGGER.debug("Step 3: Checking for updates per domain")
+            domain_updates = {}
+            
+            for domain in active_domains:
+                domain_id = domain["id"]
+                domain_name = domain["name"]
+                
+                try:
+                    # Get current VCF version for this domain
+                    releases_url = f"{vcf_url}/v1/releases"
+                    params = {"domainId": domain_id}
+                    
+                    async with session.get(releases_url, headers=headers, params=params, ssl=False) as resp:
+                        if resp.status != 200:
+                            _LOGGER.warning(f"Failed to get releases for domain {domain_name}: {resp.status}")
+                            continue
+                        releases_data = await resp.json()
+                    
+                    current_version = None
+                    if releases_data.get("elements"):
+                        current_version = releases_data["elements"][0].get("version")
+                    
+                    # Get available bundles
+                    bundles_url = f"{vcf_url}/v1/bundles"
+                    
+                    async with session.get(bundles_url, headers=headers, ssl=False) as resp:
+                        if resp.status != 200:
+                            _LOGGER.warning(f"Failed to get bundles for domain {domain_name}: {resp.status}")
+                            continue
+                        bundles_data = await resp.json()
+                    
+                    # Filter bundles for VMware Cloud Foundation updates
+                    vcf_bundles = []
+                    bundles_elements = bundles_data.get("elements", [])
+                    
+                    for bundle in bundles_elements:
+                        description = bundle.get("description", "")
+                        if "VMware Cloud Foundation" in description:
+                            vcf_bundles.append(bundle)
+                    
+                    # Find the latest available update
+                    next_version_info = None
+                    if vcf_bundles:
+                        # Sort by release date, get the oldest one (as per flow.txt)
+                        sorted_bundles = sorted(vcf_bundles, key=lambda x: x.get("releaseDate", ""))
+                        if sorted_bundles:
+                            latest_bundle = sorted_bundles[0]
+                            
+                            # Extract version from description
+                            description = latest_bundle.get("description", "")
+                            version_match = None
+                            # Try to extract version number from description
+                            import re
+                            version_pattern = r'VMware Cloud Foundation[^\d]*(\d+\.\d+(?:\.\d+)?)'
+                            match = re.search(version_pattern, description)
+                            if match:
+                                version_match = match.group(1)
+                            
+                            next_version_info = {
+                                "versionDescription": description,
+                                "versionNumber": version_match or "Unknown",
+                                "releaseDate": latest_bundle.get("releaseDate"),
+                                "bundleId": latest_bundle.get("id"),
+                                "bundlesToDownload": [latest_bundle.get("id")]
+                            }
+                    
+                    # Check upgradable components for this domain
+                    component_updates = {}
+                    if next_version_info and next_version_info["versionNumber"] != "Unknown":
+                        upgradables_url = f"{vcf_url}/v1/upgradables/domains/{domain_id}"
+                        params = {"targetVersion": next_version_info["versionNumber"]}
+                        
+                        async with session.get(upgradables_url, headers=headers, params=params, ssl=False) as resp:
+                            if resp.status == 200:
+                                upgradables_data = await resp.json()
+                                
+                                # Get component details
+                                for component in upgradables_data.get("elements", []):
+                                    component_bundle_id = component.get("bundleId")
+                                    if component_bundle_id:
+                                        bundle_detail_url = f"{vcf_url}/v1/bundles/{component_bundle_id}"
+                                        
+                                        async with session.get(bundle_detail_url, headers=headers, ssl=False) as bundle_resp:
+                                            if bundle_resp.status == 200:
+                                                bundle_detail = await bundle_resp.json()
+                                                component_name = component.get("componentType", "Unknown")
+                                                component_updates[component_name] = {
+                                                    "id": component_bundle_id,
+                                                    "description": bundle_detail.get("description", ""),
+                                                    "version": bundle_detail.get("version", "")
+                                                }
+                    
+                    # Determine update status
+                    update_status = "up_to_date"
+                    if next_version_info:
+                        if current_version and next_version_info["versionNumber"] != "Unknown":
+                            # Simple version comparison (you might want to improve this)
+                            if next_version_info["versionNumber"] != current_version:
+                                update_status = "updates_available"
+                        else:
+                            update_status = "updates_available"
+                    
+                    domain_updates[domain_id] = {
+                        "domain_name": domain_name,
+                        "current_version": current_version,
+                        "update_status": update_status,
+                        "next_version": next_version_info,
+                        "component_updates": component_updates
+                    }
+                    
+                    _LOGGER.debug(f"Domain {domain_name} update status: {update_status}")
+                    
+                except Exception as e:
+                    _LOGGER.error(f"Error checking updates for domain {domain_name}: {e}")
+                    domain_updates[domain_id] = {
+                        "domain_name": domain_name,
+                        "current_version": None,
+                        "update_status": "error",
+                        "error": str(e),
+                        "next_version": None,
+                        "component_updates": {}
+                    }
+            
+            return {
+                "domains": active_domains,
+                "domain_updates": domain_updates
+            }
+            
+        except Exception as e:
+            _LOGGER.error(f"Error in VCF update check workflow: {e}")
+            return {"domains": [], "domain_updates": {}, "error": str(e)}
 
     coordinator = DataUpdateCoordinator(
         hass,
