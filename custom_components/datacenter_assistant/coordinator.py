@@ -137,7 +137,7 @@ def get_coordinator(hass, config_entry):
                         "id": domain.get("id"),
                         "name": domain.get("name"),
                         "status": domain.get("status"),
-                        "prefix": f"domain{domain_counter}_"
+                        "prefix": f"domain{domain_counter}"
                     }
                     active_domains.append(domain_info)
                     _LOGGER.debug(f"Found active domain{domain_counter}_: {domain.get('name')} ({domain.get('id')})")

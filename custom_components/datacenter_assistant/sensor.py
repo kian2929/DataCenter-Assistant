@@ -61,7 +61,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     # Check if we already have entities for this domain
                     if domain_id not in existing_domain_entities:
                         domain_name = domain_data.get("domain_name", "Unknown")
-                        domain_prefix = domain_data.get("domain_prefix", f"domain_{domain_id[:8]}_")
+                        domain_prefix = domain_data.get("domain_prefix", f"domain{len(existing_domain_entities) + 1}")
                         
                         _LOGGER.info(f"Creating entities for newly discovered domain: {domain_name} with prefix: {domain_prefix}")
                         
@@ -92,9 +92,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
             
             if coordinator.data and "domain_updates" in coordinator.data:
                 new_entities = []
-                for domain_id, domain_data in coordinator.data["domain_updates"].items():
+                for i, (domain_id, domain_data) in enumerate(coordinator.data["domain_updates"].items()):
                     domain_name = domain_data.get("domain_name", "Unknown")
-                    domain_prefix = domain_data.get("domain_prefix", f"domain_{domain_id[:8]}_")
+                    domain_prefix = domain_data.get("domain_prefix", f"domain{i + 1}")
                     
                     _LOGGER.info(f"Creating entities for domain: {domain_name} with prefix: {domain_prefix}")
                     
@@ -273,12 +273,12 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
         self.coordinator = coordinator
         self._domain_id = domain_id
         self._domain_name = domain_name
-        self._domain_prefix = domain_prefix or f"domain_{domain_id[:8]}_"
+        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
         
         # Use domain prefix for entity naming - simplified without domain name
         safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        self._attr_name = f"VCF {self._domain_prefix}Status"
-        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_status"
+        self._attr_name = f"VCF {self._domain_prefix} Status"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_status"
 
     @property
     def icon(self):
@@ -342,12 +342,12 @@ class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
         self.coordinator = coordinator
         self._domain_id = domain_id
         self._domain_name = domain_name
-        self._domain_prefix = domain_prefix or f"domain_{domain_id[:8]}_"
+        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
         
-        # Use domain prefix for entity naming - simplified name since prefix already indicates domain
+        # Use domain prefix for entity naming - clearer component update focus
         safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        self._attr_name = f"VCF {self._domain_prefix}Available Updates"
-        self._attr_unique_id = f"vcf_{self._domain_prefix}{safe_name}_available_updates"
+        self._attr_name = f"VCF {self._domain_prefix} Components To Update"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_components_to_update"
         self._attr_icon = "mdi:update"
 
     @property
