@@ -42,10 +42,4 @@ In the end, somehow report to HomeAssistant an entity for the current domain "up
 
 ------------------------------------------------
 
-Actual upgrade workflow TBD
-
-
-
-
-
-
+Actual upgrade workflow is in flow2.txt

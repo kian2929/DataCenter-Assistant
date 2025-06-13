@@ -1,0 +1,160 @@
+For each domain, there should be an entity to allow user to trigger upgrade to the available new version of VCF.
+
+This entity should be a button, and if it is pressed when there's no VCF update available, they should be a message in Home Asistant stating a relevant situation.
+If it was pressed when there is a update available, a relevant message should be also displayed and the flow below should start executing
+
+The entity "VCF domainX Status" should change to value "update_process_started"
+
+There should be another entity to track update status, maybe something like "VCF domainX Update Status". This should have value "waiting_for_initiation" when there is no update flow happening
+
+There should be another entity to track update logs, maybe something like "VCF domainX Update Logs". I want to use this entity to deliver dynamic markdown messages to a dashboard card. Default value should be a tidy markdown saying "No Messages" or something like that.
+
+----------
+
+"VCF domainX Update Status" should change to "downloading_bundles"
+
+All bundles should start downloading (should be done for each bundle, including the one you label as "fallback" (so same next VCF version and same release date). Although I don't know what such bundles are used for, they might be needed. Better to have than not have it. Important note is, we are not supposed to trigger these fallback updates during the next steps. Just leave them be after downloading them.)
+PATCH /v1/bundles/{bundleID}
+in body should be "downloadNow": true (check API referece for exact implementation)
+
+Feel free to add any argument to "VCF domainX Update Status" that further enhances the information delivered. If you choose to do so, however, do not over-do.
+
+---------
+
+After all necessary bundles are downloaded, we need to "target" the next vcf version for the domain we are working on.
+
+"VCF domainX Update Status" should change to "setting_new_vcf_version_target"
+
+This is done via
+PATCH /v1/releases/domains/{domainID}
+
+and you should have a body like this (generally you don't need more K-V, just one below is enough according to my tests. Otherwise, additional keys with empty values bring you back errors):
+
+{
+    "targetVersion": "5.2.1.0" (<- so, next VCF version here)
+}
+
+look into API reference if you need more details.
+
+--------
+
+After "target"ing is done, we should run "checks".
+
+"VCF domainX Update Status" should change to "initializing_prechecks"
+
+GET /v1/system/check-sets/queries
+body:
+{
+    "checkSetType": "UPGRADE",
+    "domains": [
+        {
+            "domainId": "(domain ID)"
+        }
+    ]
+}
+
+from response:
+Extract queryId (UUID)
+extract resources list
+
+"VCF domainX Update Status" should change to "running_prechecks"
+
+POST /v1/system/check-sets
+
+{
+  "queryId": "<queryId from previous step>",
+  "resources": [
+    {
+      "resourceId": "resources list > resourceId",
+      "type": "resources list > resourceType",
+      "targetVersion": "component-target-version (not sure where to get this from)"
+    },
+    ... (for each component)
+  ],
+  "targetVersion": "overall-vcf-target-version (next vcf version)"
+}
+
+extract "id" (this is the precheck process ID)
+
+"VCF domainX Update Status" should change to "evaluating_prechecks"
+set argument "timeout"
+
+GET /v1/system/check-sets/{id}  (<- precheck process ID)
+
+you will need to do this API call multiple times in a loop until it finishes. Response will be pretty big and I am unfamiliar. You'd need to test it out.
+
+In the end, I want to have all errors and warnings in "VCF domainX Update Logs" as a nice markdown
+
+also, use a timeout of for this repeat api call loop. make it 40 minutes
+
+"VCF domainX Update Status" should change to "prechecks_done"
+
+------
+
+If there was any error or warning in prechecks:
+> Keep warnings and errors in "VCF domainX Update Logs"
+> See if the entity "VCF domainX ignore alerts" is positive (implement this entity. I rather it is a home assistant slider on/off)
+
+If "VCF domainX ignore alerts" is positive, continue with the flow.
+If "VCF domainX ignore alerts" is negative, 
+> "VCF domainX Update Status" should change to "waiting_for_alert_acknowledgement"
+> wait for the entity "VCF domainX acknowlege alerts" to be pressed (you'd need to implement it too, should be a button)
+
+if button is pressed, set "VCF domainX Update Status" should change to "alerts_were_acknowledged". in "VCF domainX Update Logs" show "Alerts were acknowledged. Continuing". Continue the flow
+if not pressed, keep waiting indefinitively.
+
+------
+
+This is where the actual upgrades begin.
+
+set "VCF domainX Update Status" should change to "starting_upgrades"
+
+By now, you know what bundle IDs refer to what components.
+
+Important one is, the SDDC Manager.
+
+If needed, we need to upgrade this first.
+Keep in mind , during the upgrade of SDDC Manager, the API will become completely unavailable. I would expect it to say unavailable for at least 1 hour.
+But you should have a mechanism to check if it available again somehow. Thing is, Even when it becomes pingable, it might not be ready yet. Best would be trying to GET /vi/domains and try until it works again. When it starts working, wait additional 5 minutes.
+
+After that, you may continue with other components.
+
+from GET /v1/upgradables/domains/{domainId}/?targetVersion=<nextVersion_versionNumber>, you'd see what component has "status":  "AVAILABLE". You will be able to upgrade these.
+
+you could refer to https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/upgrades/ and more importantly to https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/upgrades/post/on how to do the upgrades
+
+you may or may not need to do upgrade pre-checks too. See https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/upgrades/upgradeId/prechecks/post/
+
+For each component upgrade, have 3 hour timeout
+
+Go through all component upgrades in a similar fashion.
+
+I know this is complitcated. You'd need to try & fail with some test scripts. Refer to API reference when you need it.
+
+-------
+
+After going through all upgardes, if nothing left, do
+POST /v1/releases/domains/{domainID}/validations
+
+and you should have a body like this (generally you don't need more K-V, just one below is enough according to my tests. Otherwise, additional keys with empty values bring you back errors):
+
+{
+    "targetVersion": "5.2.1.0" (<- so, next VCF version here)
+}
+
+look into API reference if you need more details. 
+
+You'd have a response and in this response there's "executionStatus" K-V. It can be IN_PROGRESS, FAILED, COMPLETED, UNKNOWN, SKIPPED, CANCELLED, CANCELLATION_IN_PROGRESS
+
+If you have "COMPLETED", then set "VCF domainX Update Status" value "successfuly_completed"
+then set it to default "waiting_for_initiation"
+
+If you have anything else, fail.
+
+-------------------------
+
+IF AT ANY POINT WE FAIL OR REACH A TIMEOUT set "VCF domainX Update Status" to "failed"
+
+-------------------------
+
+in "VCF domainX Update Logs" show the default "No Messages" or something
