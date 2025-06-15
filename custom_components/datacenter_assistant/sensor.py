@@ -249,7 +249,6 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
                 domain_details.append({
                     "domainName": domain.get("name"),
                     "domainID": domain_id,
-                    "status": domain.get("status"),
                     "upd_status": update_info.get("update_status", "unknown"),
                     "curr_ver": update_info.get("current_version"),
                     "sddc_fqdn": domain.get("sddc_manager_fqdn"),
@@ -304,11 +303,11 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             domain_updates = self.coordinator.data.get("domain_updates", {})
             domain_data = domain_updates.get(self._domain_id, {})
             
+            # Only show essential attributes in frontend
             attributes = {
                 "domain": domain_data.get("domain_name"),
-                "prefix": domain_data.get("domain_prefix"),
-                "current_version": domain_data.get("current_version"),
-                "status": domain_data.get("update_status")
+                "homeassistant_prefix": domain_data.get("domain_prefix"),
+                "current_version": domain_data.get("current_version")
             }
             
             # Add next release information if available
@@ -316,18 +315,10 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             if next_release:
                 attributes.update({
                     "next_version": next_release.get("version"),
-                    "next_desc": truncate_description(next_release.get("description")),
-                    "next_date": next_release.get("releaseDate"),
-                    "next_product": next_release.get("product"),
-                    "next_min_compatible_vcf": next_release.get("minCompatibleVcfVersion"),
-                    "next_applicability_status": next_release.get("applicabilityStatus"),
-                    "next_is_applicable": next_release.get("isApplicable")
+                    "release_date": next_release.get("releaseDate")
                 })
-                
-                # Add the complete next release JSON for advanced users
-                attributes[f"{domain_data.get('domain_prefix', 'domain')}_nextRelease"] = next_release
             
-            # Add error if present
+            # Add error if present (important for troubleshooting)
             if "error" in domain_data:
                 attributes["error"] = domain_data["error"]
             

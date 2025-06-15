@@ -162,6 +162,7 @@ def get_coordinator(hass, config_entry):
                 for sddc in sddc_elements:
                     if sddc.get("domain", {}).get("id") == domain["id"]:
                         domain["sddc_manager_id"] = sddc.get("id")
+                        domain["sddc_manager_fqdn"] = sddc.get("fqdn")
                         _LOGGER.debug(f"Mapped SDDC Manager {sddc.get('fqdn')} to domain {domain['name']}")
                         break
             
