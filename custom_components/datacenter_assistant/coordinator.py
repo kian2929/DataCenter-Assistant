@@ -298,7 +298,7 @@ def get_coordinator(hass, config_entry):
                         next_version_info = {
                             "versionDescription": truncate_description(description),  # nextVersion_versionDescription
                             "versionNumber": target_version,     # nextVersion_versionNumber
-                            "releaseDate": target_bundle.get("releaseDate"),  # nextVersion_releaseDate
+                            "releaseDate": target_bundle.get("releasedDate"),  # nextVersion_releaseDate
                             "bundleId": target_bundle.get("id")
                         }
                     

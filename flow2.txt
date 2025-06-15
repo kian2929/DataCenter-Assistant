@@ -1,17 +1,80 @@
-First of all, remove entity "VCF Download Bunlde" and the entity "VCF Execute Updates" as they do nothing and they are jus placeholders for the functionality below.
+Fisrt and foremost, we need an improvement to code:
 
-----------
+Instead of the current implementation, we should check if a domain has an update available from the reposnse of this call:
+GET /v1/releases/domains/{domainId}/future-releases
+Check the API reference to see its exact response structure.
 
-For each domain, there should be an entity to allow user to trigger upgrade to the available new version of VCF.
+Essentially, we'd want to capture the whole return JSON. Let's capture it in "domainX_nextRelease"
 
+If multiple items exist in the response, then we shall only consider the oldest one that fits the criteri below:
+- domainX_nextRelease["version"] > current VCF version >= domainX_nextRelease["minCompatibleVcfVersion"] (In coordinator.py, we already capture the current version of our VCF)
+- domainX_nextRelease["applicabilityStatus"] == "APPLICABLE" and domainX_nextRelease["isApplicable"] == true
+
+We can get the release date information by domainX_nextRelease["releaseDate"]
+
+All other means of retrieving information about update status update details should be removed from the code, as this is a better way to do it.
+
+------------------
+
+
+
+
+
+For each domain where we have an update available we should gather more information. We can get more information about an update/upgrade from the reposnse of this call:
+GET /v1/releases/domains/{domainId}/future-releases
+Check the API reference to see its exact response structure.
+
+Essentially, we'd want to capture "bom" list, "isApplicable" and 
+
+
+
+
+
+
+We need to improve the enitity "VCF domainX Status" and have an attribute called "Next VCF BOM"
+This attribute should contain information we shall get from the response of
+
+
+
+
+
+
+
+For each domain, there should be an entity to allow user to trigger upgrade to the available new version of VCF. Named someting like "VCF domainX Start Upgrade"
 This entity should be a button, and if it is pressed when there's no VCF update available, they should be a message in Home Asistant stating a relevant situation. then this flow is done.
 If it was pressed when there is a update available, a relevant message should be also displayed and the flow below should start executing.
 
 The entity "VCF domainX Status" should change to value "update_process_started"
 
 There should be another entity to track update status, maybe something like "VCF domainX Upgrade Status". This should have value "waiting_for_initiation" when there is no update flow happening
-
 There should be another entity to track update logs, maybe something like "VCF domainX Upgrade Logs". I want to use this entity to deliver dynamic markdown messages to a dashboard card. Default value should be a tidy markdown saying "No Messages" or something like that.
+
+----------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ----------
 
