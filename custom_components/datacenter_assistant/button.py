@@ -24,9 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     entities = [
         VCFRefreshTokenButton(hass, entry),
-        VCFManualUpdateCheckButton(hass, entry, coordinator),
-        VCFExecuteUpdatesButton(hass, entry, coordinator),
-        VCFDownloadBundleButton(hass, entry, coordinator)
+        VCFManualUpdateCheckButton(hass, entry, coordinator)
     ]
     
     async_add_entities(entities)
@@ -123,3 +121,4 @@ class VCFManualUpdateCheckButton(ButtonEntity, CoordinatorEntity):
             _LOGGER.info("VCF update check process completed successfully")
         except Exception as e:
             _LOGGER.error(f"Error during manual VCF update check: {e}")
+
