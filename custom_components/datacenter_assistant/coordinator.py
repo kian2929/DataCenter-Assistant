@@ -165,8 +165,8 @@ def get_coordinator(hass, config_entry):
                         _LOGGER.debug(f"Mapped SDDC Manager {sddc.get('fqdn')} to domain {domain['name']}")
                         break
             
-            # Step 3: For each domain, follow the update checking workflow
-            _LOGGER.debug("Step 3: Checking for updates per domain following flow.txt workflow")
+            # Step 3: For each domain, check for updates using future-releases API
+            _LOGGER.debug("Step 3: Checking for updates per domain using future-releases API")
             domain_updates = {}
             
             for domain in active_domains:
@@ -190,142 +190,143 @@ def get_coordinator(hass, config_entry):
                     if releases_data.get("elements"):
                         current_version = releases_data["elements"][0].get("version")
                     
-                    # Get bundles to find VCF updates (as per flow.txt)
-                    _LOGGER.debug(f"Getting bundles for VCF updates for domain {domain_name}")
-                    bundles_url = f"{vcf_url}/v1/bundles"
-                    
-                    async with session.get(bundles_url, headers=headers, ssl=False) as resp:
-                        if resp.status != 200:
-                            _LOGGER.warning(f"Failed to get bundles for domain {domain_name}: {resp.status}")
-                            continue
-                        bundles_data = await resp.json()
-                    
-                    # Filter bundles with "VMware Cloud Foundation" in description (adjusted pattern)
-                    vcf_bundles = []
-                    bundles_elements = bundles_data.get("elements", [])
-                    
-                    import re
-                    for bundle in bundles_elements:
-                        description = truncate_description(bundle.get("description", ""))
-                        # Look for VMware Cloud Foundation upgrade bundles - updated pattern
-                        if re.search(r"upgrade bundle for VMware Cloud Foundation \d+\.\d+(?:\.\d+)?(?:\.\d+)?", description, re.IGNORECASE):
-                            vcf_bundles.append(bundle)
-                            _LOGGER.debug(f"Found VCF upgrade bundle: {description[:100]}")
-                        elif re.search(r"VMware Cloud Foundation.*\d+\.\d+(?:\.\d+)?(?:\.\d+)?", description, re.IGNORECASE):
-                            # Fallback pattern for other VCF bundle formats
-                            vcf_bundles.append(bundle)
-                            _LOGGER.debug(f"Found VCF bundle (fallback): {description[:100]}")
-                    
-                    # Initialize next version info
-                    next_version_info = None
-                    
-                    if not vcf_bundles:
-                        # No VCF bundles found - report "up to date"
-                        _LOGGER.debug(f"No VCF update bundles found for domain {domain_name} - reporting up to date")
+                    if not current_version:
+                        _LOGGER.warning(f"Could not determine current VCF version for domain {domain_name}")
                         domain_updates[domain_id] = {
                             "domain_name": domain_name,
                             "domain_prefix": prefix,
-                            "current_version": current_version,
-                            "update_status": "up_to_date",
-                            "next_version": None
+                            "current_version": None,
+                            "update_status": "error",
+                            "error": "Could not determine current VCF version",
+                            "next_release": None
                         }
                         continue
                     
-                    # Find the next appropriate version to upgrade to (don't skip versions)
-                    sorted_bundles = sorted(vcf_bundles, key=lambda x: x.get("releaseDate", ""))
-                    if sorted_bundles:
-                        # Extract versions and sort them properly to find the next logical upgrade
-                        version_bundles = []
-                        for bundle in vcf_bundles:
-                            description = truncate_description(bundle.get("description", ""))
-                            version_pattern = r"VMware Cloud Foundation\s+(\d+\.\d+\.\d+(?:\.\d+)?)"
-                            match = re.search(version_pattern, description, re.IGNORECASE)
-                            if match:
-                                version = match.group(1)
-                                # Normalize version to 4 parts
-                                version_parts = version.split('.')
-                                if len(version_parts) == 3:
-                                    version = f"{version}.0"
-                                elif len(version_parts) == 2:
-                                    version = f"{version}.0.0"
-                                
-                                # Convert to tuple for proper version comparison
-                                version_tuple = tuple(map(int, version.split('.')))
-                                version_bundles.append((version_tuple, version, bundle))
-                        
-                        # Sort by version number (not release date) to ensure proper upgrade path
-                        version_bundles.sort(key=lambda x: x[0])
-                        
-                        # Find the next version after current version
-                        target_bundle = None
-                        target_version = None
-                        
-                        if current_version:
-                            current_parts = current_version.split('.')
-                            if len(current_parts) == 3:
-                                current_version = f"{current_version}.0"
-                            current_tuple = tuple(map(int, current_version.split('.')))
-                            
-                            # Find the first version that's higher than current
-                            for version_tuple, version_str, bundle in version_bundles:
-                                if version_tuple > current_tuple:
-                                    target_bundle = bundle
-                                    target_version = version_str
-                                    _LOGGER.info(f"Selected next upgrade version: {current_version} -> {target_version}")
-                                    break
-                        else:
-                            # If no current version, take the lowest available version
-                            if version_bundles:
-                                target_bundle = version_bundles[0][2]
-                                target_version = version_bundles[0][1]
-                                _LOGGER.info(f"No current version detected, selecting lowest available: {target_version}")
-                        
-                        if not target_bundle:
-                            # All available versions are equal or lower than current
-                            _LOGGER.debug(f"No higher version found than current {current_version}")
+                    # Get future releases for this domain
+                    _LOGGER.debug(f"Getting future releases for domain {domain_name}")
+                    future_releases_url = f"{vcf_url}/v1/releases/domains/{domain_id}/future-releases"
+                    
+                    async with session.get(future_releases_url, headers=headers, ssl=False) as resp:
+                        if resp.status != 200:
+                            _LOGGER.warning(f"Failed to get future releases for domain {domain_name}: {resp.status}")
+                            # If no future releases available, domain is up to date
                             domain_updates[domain_id] = {
                                 "domain_name": domain_name,
                                 "domain_prefix": prefix,
                                 "current_version": current_version,
                                 "update_status": "up_to_date",
-                                "next_version": None
+                                "next_release": None
                             }
                             continue
+                        future_releases_data = await resp.json()
+                    
+                    # Filter and find the appropriate next release
+                    next_release_info = None
+                    applicable_releases = []
+                    
+                    future_releases = future_releases_data.get("elements", [])
+                    _LOGGER.debug(f"Found {len(future_releases)} future releases for domain {domain_name}")
+                    
+                    # Filter releases based on criteria
+                    for release in future_releases:
+                        # Check if release meets criteria:
+                        # 1. applicabilityStatus == "APPLICABLE" 
+                        # 2. isApplicable == true
+                        # 3. release["version"] > current_version >= release["minCompatibleVcfVersion"]
                         
-                        # Extract version info variable naming
-                        description = truncate_description(target_bundle.get("description", ""))
+                        applicability_status = release.get("applicabilityStatus")
+                        is_applicable = release.get("isApplicable", False)
+                        release_version = release.get("version")
+                        min_compatible_version = release.get("minCompatibleVcfVersion")
                         
-                        next_version_info = {
-                            "versionDescription": truncate_description(description),  # nextVersion_versionDescription
-                            "versionNumber": target_version,     # nextVersion_versionNumber
-                            "releaseDate": target_bundle.get("releasedDate"),  # nextVersion_releaseDate
-                            "bundleId": target_bundle.get("id")
-                        }
+                        _LOGGER.debug(f"Evaluating release {release_version}: "
+                                    f"status={applicability_status}, "
+                                    f"applicable={is_applicable}, "
+                                    f"minCompatible={min_compatible_version}")
+                        
+                        if (applicability_status == "APPLICABLE" and 
+                            is_applicable and 
+                            release_version and 
+                            min_compatible_version):
+                            
+                            # Compare versions (assuming they are in format x.y.z.w)
+                            try:
+                                def version_tuple(v):
+                                    parts = v.split('.')
+                                    # Normalize to 4 parts
+                                    while len(parts) < 4:
+                                        parts.append('0')
+                                    return tuple(map(int, parts[:4]))
+                                
+                                current_tuple = version_tuple(current_version)
+                                release_tuple = version_tuple(release_version)
+                                min_compatible_tuple = version_tuple(min_compatible_version)
+                                
+                                # Check if: release_version > current_version >= min_compatible_version
+                                if release_tuple > current_tuple >= min_compatible_tuple:
+                                    applicable_releases.append(release)
+                                    _LOGGER.debug(f"Release {release_version} is applicable for domain {domain_name}")
+                                else:
+                                    _LOGGER.debug(f"Release {release_version} does not meet version criteria: "
+                                                f"{release_version} > {current_version} >= {min_compatible_version}")
+                                
+                            except Exception as ve:
+                                _LOGGER.warning(f"Error comparing versions for release {release_version}: {ve}")
+                                continue
+                        else:
+                            _LOGGER.debug(f"Release {release_version} does not meet applicability criteria")
+                    
+                    # If multiple applicable releases exist, select the oldest one (lowest version)
+                    if applicable_releases:
+                        _LOGGER.debug(f"Found {len(applicable_releases)} applicable releases for domain {domain_name}")
+                        
+                        # Sort by version to get the oldest (lowest version number)
+                        def version_tuple_for_sort(v):
+                            parts = v.split('.')
+                            while len(parts) < 4:
+                                parts.append('0')
+                            try:
+                                return tuple(map(int, parts[:4]))
+                            except ValueError:
+                                # Handle non-numeric version parts
+                                _LOGGER.warning(f"Non-numeric version part in {v}, using string comparison")
+                                return tuple(parts[:4])
+                        
+                        applicable_releases.sort(key=lambda x: version_tuple_for_sort(x.get("version", "0.0.0.0")))
+                        selected_release = applicable_releases[0]
+                        
+                        # Capture the whole JSON as domainX_nextRelease
+                        next_release_info = selected_release
+                        
+                        _LOGGER.info(f"Selected next release for domain {domain_name}: {selected_release.get('version')} "
+                                   f"(release date: {selected_release.get('releaseDate')})")
+                    else:
+                        _LOGGER.debug(f"No applicable releases found for domain {domain_name}")
                     
                     # Determine final update status
-                    update_status = "updates_available" if next_version_info else "up_to_date"
+                    update_status = "updates_available" if next_release_info else "up_to_date"
                     
                     domain_updates[domain_id] = {
                         "domain_name": domain_name,
                         "domain_prefix": prefix,
                         "current_version": current_version,
                         "update_status": update_status,
-                        "next_version": next_version_info
+                        "next_release": next_release_info  # Store the complete JSON response
                     }
                     
                     _LOGGER.info(f"Domain {domain_name} update status: {update_status}")
-                    if next_version_info:
-                        _LOGGER.info(f"Next VCF version available: {next_version_info['versionNumber']}")
+                    if next_release_info:
+                        _LOGGER.info(f"Next VCF version available: {next_release_info.get('version')}")
                     
                 except Exception as e:
                     _LOGGER.error(f"Error checking updates for domain {domain_name}: {e}")
                     domain_updates[domain_id] = {
                         "domain_name": domain_name,
                         "domain_prefix": prefix,
-                        "current_version": None,
+                        "current_version": current_version if 'current_version' in locals() else None,
                         "update_status": "error",
                         "error": str(e),
-                        "next_version": None
+                        "next_release": None
                     }
             
             return {

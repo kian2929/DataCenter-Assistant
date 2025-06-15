@@ -311,15 +311,21 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
                 "status": domain_data.get("update_status")
             }
             
-            # Add next version information if available
-            next_version = domain_data.get("next_version")
-            if next_version:
+            # Add next release information if available
+            next_release = domain_data.get("next_release")
+            if next_release:
                 attributes.update({
-                    "next_version": next_version.get("versionNumber"),
-                    "next_desc": truncate_description(next_version.get("versionDescription")),
-                    "next_date": next_version.get("releaseDate"),
-                    "next_vcf_bundle": next_version.get("bundlesToDownload", [])
+                    "next_version": next_release.get("version"),
+                    "next_desc": truncate_description(next_release.get("description")),
+                    "next_date": next_release.get("releaseDate"),
+                    "next_product": next_release.get("product"),
+                    "next_min_compatible_vcf": next_release.get("minCompatibleVcfVersion"),
+                    "next_applicability_status": next_release.get("applicabilityStatus"),
+                    "next_is_applicable": next_release.get("isApplicable")
                 })
+                
+                # Add the complete next release JSON for advanced users
+                attributes[f"{domain_data.get('domain_prefix', 'domain')}_nextRelease"] = next_release
             
             # Add error if present
             if "error" in domain_data:

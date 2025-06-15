@@ -135,11 +135,11 @@ class VCFUpdatesAvailableBinarySensor(CoordinatorEntity, BinarySensorEntity):
                 status_counts[status] = status_counts.get(status, 0) + 1
                 
                 if status == "updates_available":
-                    next_version = domain_data.get("next_version", {})
+                    next_release = domain_data.get("next_release", {})
                     domains_with_updates.append({
                         "domainName": domain_data.get("domain_name"),
                         "current_version": domain_data.get("current_version"),
-                        "next_version": next_version.get("versionNumber")
+                        "next_version": next_release.get("version")
                     })
             
             return {
