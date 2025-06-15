@@ -65,10 +65,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         
                         _LOGGER.info(f"Creating entities for newly discovered domain: {domain_name} with prefix: {domain_prefix}")
                         
-                        # Create unique entity IDs using domain prefix as per flow.txt
+                        # Create unique entity IDs using domain prefix
                         new_entities.extend([
-                            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
-                            VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
+                            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix)
                         ])
                         
                         # Mark this domain as having entities
@@ -98,10 +97,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     
                     _LOGGER.info(f"Creating entities for domain: {domain_name} with prefix: {domain_prefix}")
                     
-                    # Create unique entity IDs using domain prefix as per flow.txt
+                    # Create unique entity IDs using domain prefix
                     new_entities.extend([
-                        VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
-                        VCFDomainComponentsSensor(coordinator, domain_id, domain_name, domain_prefix)
+                        VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix)
                     ])
                     
                     # Mark this domain as having entities
@@ -266,7 +264,7 @@ class VCFDomainCountSensor(CoordinatorEntity, SensorEntity):
 
 
 class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
-    """Sensor for individual domain update status as per flow.txt requirements."""
+    """Sensor for individual domain update status requirements."""
     
     def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
         super().__init__(coordinator)
@@ -301,7 +299,7 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return domain-specific update attributes as per flow.txt format."""
+        """Return domain-specific update attributes format."""
         try:
             domain_updates = self.coordinator.data.get("domain_updates", {})
             domain_data = domain_updates.get(self._domain_id, {})
@@ -331,73 +329,5 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             
         except Exception as e:
             _LOGGER.error(f"Error getting domain {self._domain_name} attributes: {e}")
-            return {"error": str(e)}
-
-
-class VCFDomainComponentsSensor(CoordinatorEntity, SensorEntity):
-    """Sensor for individual domain components with available updates."""
-    
-    def __init__(self, coordinator, domain_id, domain_name, domain_prefix=None):
-        super().__init__(coordinator)
-        self.coordinator = coordinator
-        self._domain_id = domain_id
-        self._domain_name = domain_name
-        self._domain_prefix = domain_prefix or f"domain{domain_id[:8]}"
-        
-        # Use domain prefix for entity naming - clearer component update focus
-        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        self._attr_name = f"VCF {self._domain_prefix} Components To Update"
-        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_components_to_update"
-        self._attr_icon = "mdi:update"
-
-    @property
-    def state(self):
-        """Return count of components with available updates."""
-        try:
-            domain_updates = self.coordinator.data.get("domain_updates", {})
-            domain_data = domain_updates.get(self._domain_id, {})
-            component_updates = domain_data.get("component_updates", {})
-            return len(component_updates)
-        except Exception:
-            return 0
-
-    @property
-    def extra_state_attributes(self):
-        """Return component update details for this domain."""
-        try:
-            domain_updates = self.coordinator.data.get("domain_updates", {})
-            domain_data = domain_updates.get(self._domain_id, {})
-            component_updates = domain_data.get("component_updates", {})
-            
-            # Sort components to put SDDC Manager first, then others alphabetically
-            sorted_components = {}
-            
-            # Add SDDC Manager first if it exists
-            sddc_components = {k: v for k, v in component_updates.items() if 'sddc' in k.lower() or 'manager' in k.lower()}
-            for comp_name, comp_data in sddc_components.items():
-                sorted_components[comp_name] = {
-                    "desc": truncate_description(comp_data.get("description")),
-                    "ver": comp_data.get("version"),
-                    "bundle_id": comp_data.get("id")
-                }
-            
-            # Add other components alphabetically
-            other_components = {k: v for k, v in component_updates.items() if k not in sddc_components}
-            for comp_name in sorted(other_components.keys()):
-                comp_data = other_components[comp_name]
-                sorted_components[comp_name] = {
-                    "desc": truncate_description(comp_data.get("description")),
-                    "ver": comp_data.get("version"),
-                    "bundle_id": comp_data.get("id")
-                }
-            
-            return {
-                "domain": domain_data.get("domain_name"),
-                "updates_available": len(component_updates),
-                "components": sorted_components
-            }
-            
-        except Exception as e:
-            _LOGGER.error(f"Error getting domain {self._domain_name} available updates: {e}")
             return {"error": str(e)}
 

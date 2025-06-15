@@ -126,7 +126,7 @@ def get_coordinator(hass, config_entry):
                 else:
                     domains_data = await resp.json()
             
-            # Extract active domains with prefixed variables as per flow.txt
+            # Extract active domains with prefixed variables
             active_domains = []
             domain_counter = 1
             domain_elements = domains_data.get("elements", [])
@@ -144,7 +144,7 @@ def get_coordinator(hass, config_entry):
                     domain_counter += 1
             
             if not active_domains:
-                _LOGGER.warning("No active domains found - failing setup as per flow.txt")
+                _LOGGER.warning("No active domains found - failing setup")
                 return {"domains": [], "domain_updates": {}, "setup_failed": True}
             
             # Step 2: Get SDDC Manager Information
@@ -162,8 +162,6 @@ def get_coordinator(hass, config_entry):
                 for sddc in sddc_elements:
                     if sddc.get("domain", {}).get("id") == domain["id"]:
                         domain["sddc_manager_id"] = sddc.get("id")
-                        domain["sddc_manager_fqdn"] = sddc.get("fqdn")
-                        domain["sddc_manager_version"] = sddc.get("version")
                         _LOGGER.debug(f"Mapped SDDC Manager {sddc.get('fqdn')} to domain {domain['name']}")
                         break
             
@@ -222,15 +220,14 @@ def get_coordinator(hass, config_entry):
                     next_version_info = None
                     
                     if not vcf_bundles:
-                        # No VCF bundles found - report "up to date" as per flow.txt
+                        # No VCF bundles found - report "up to date"
                         _LOGGER.debug(f"No VCF update bundles found for domain {domain_name} - reporting up to date")
                         domain_updates[domain_id] = {
                             "domain_name": domain_name,
                             "domain_prefix": prefix,
                             "current_version": current_version,
                             "update_status": "up_to_date",
-                            "next_version": None,
-                            "component_updates": {}
+                            "next_version": None
                         }
                         continue
                     
@@ -245,10 +242,12 @@ def get_coordinator(hass, config_entry):
                             match = re.search(version_pattern, description, re.IGNORECASE)
                             if match:
                                 version = match.group(1)
-                                # Normalize version to 4 parts (add .0 if missing fourth part)
+                                # Normalize version to 4 parts
                                 version_parts = version.split('.')
                                 if len(version_parts) == 3:
                                     version = f"{version}.0"
+                                elif len(version_parts) == 2:
+                                    version = f"{version}.0.0"
                                 
                                 # Convert to tuple for proper version comparison
                                 version_tuple = tuple(map(int, version.split('.')))
@@ -289,135 +288,19 @@ def get_coordinator(hass, config_entry):
                                 "domain_prefix": prefix,
                                 "current_version": current_version,
                                 "update_status": "up_to_date",
-                                "next_version": None,
-                                "component_updates": {}
+                                "next_version": None
                             }
                             continue
                         
-                        # Extract version info as per flow.txt variable naming
+                        # Extract version info variable naming
                         description = truncate_description(target_bundle.get("description", ""))
                         
                         next_version_info = {
                             "versionDescription": truncate_description(description),  # nextVersion_versionDescription
                             "versionNumber": target_version,     # nextVersion_versionNumber
                             "releaseDate": target_bundle.get("releaseDate"),  # nextVersion_releaseDate
-                            "bundleId": target_bundle.get("id"),
-                            "bundlesToDownload": [target_bundle.get("id")]  # nextVersion_bundlesToDownload
+                            "bundleId": target_bundle.get("id")
                         }
-                        
-                        # Also collect configuration drift bundle if available for this version
-                        # This will be needed for the actual upgrade process (TBD)
-                        config_drift_bundles = []
-                        for bundle in vcf_bundles:
-                            desc = bundle.get("description", "")
-                            if "configuration drift bundle" in desc.lower() and target_version in desc:
-                                config_drift_bundles.append(bundle.get("id"))
-                                _LOGGER.debug(f"Found config drift bundle for {target_version}: {bundle.get('id')}")
-                        
-                        if config_drift_bundles:
-                            next_version_info["bundlesToDownload"].extend(config_drift_bundles)
-                            next_version_info["configDriftBundles"] = config_drift_bundles
-                        
-                        # Check if SDDC_MANAGER component needs update
-                        components = target_bundle.get("components", [])
-                        sddc_component = None
-                        for comp in components:
-                            if comp.get("type") == "SDDC_MANAGER":
-                                sddc_component = comp
-                                break
-                        
-                        # Check if update is actually needed by comparing versions
-                        update_needed = True
-                        if sddc_component and current_version:
-                            to_version = sddc_component.get("toVersion")
-                            if to_version and current_version:
-                                # Simple version comparison - you might want to enhance this
-                                update_needed = to_version != current_version
-                        
-                        if not update_needed:
-                            _LOGGER.debug(f"SDDC Manager version check shows no update needed for {domain_name}")
-                            domain_updates[domain_id] = {
-                                "domain_name": domain_name,
-                                "domain_prefix": prefix,
-                                "current_version": current_version,
-                                "update_status": "up_to_date",
-                                "next_version": None,
-                                "component_updates": {}
-                            }
-                            continue
-                    
-                    # Get upgradable components for this domain with target version
-                    component_updates = {}
-                    if next_version_info and next_version_info["versionNumber"] != "Unknown":
-                        _LOGGER.debug(f"Getting upgradables for domain {domain_name} with target version {next_version_info['versionNumber']}")
-                        upgradables_url = f"{vcf_url}/v1/upgradables/domains/{domain_id}"
-                        params = {"targetVersion": next_version_info["versionNumber"]}
-                        
-                        async with session.get(upgradables_url, headers=headers, params=params, ssl=False) as resp:
-                            if resp.status == 200:
-                                upgradables_data = await resp.json()
-                                
-                                # Get component details for each component bundle
-                                for component in upgradables_data.get("elements", []):
-                                    component_bundle_id = component.get("bundleId")
-                                    component_type = component.get("componentType", "Unknown")
-                                    
-                                    if component_bundle_id:
-                                        bundle_detail_url = f"{vcf_url}/v1/bundles/{component_bundle_id}"
-                                        
-                                        async with session.get(bundle_detail_url, headers=headers, ssl=False) as bundle_resp:
-                                            if bundle_resp.status == 200:
-                                                bundle_detail = await bundle_resp.json()
-                                                # Store component update info as per flow.txt format
-                                                component_updates[f"componentUpdate{len(component_updates)+1}"] = {
-                                                    "id": component_bundle_id,
-                                                    "description": truncate_description(bundle_detail.get("description", "")),
-                                                    "version": bundle_detail.get("version", ""),
-                                                    "componentType": component_type
-                                                }
-                            elif resp.status == 500:
-                                # Handle API error - try to get component info from the bundle itself
-                                error_text = await resp.text()
-                                _LOGGER.warning(f"Upgradables API returned 500 for domain {domain_name}, version {next_version_info['versionNumber']}: {error_text}")
-                                
-                                # Try to get component information from the target bundle
-                                bundle_detail_url = f"{vcf_url}/v1/bundles/{next_version_info['bundleId']}"
-                                async with session.get(bundle_detail_url, headers=headers, ssl=False) as bundle_resp:
-                                    if bundle_resp.status == 200:
-                                        bundle_detail = await bundle_resp.json()
-                                        components = bundle_detail.get("components", [])
-                                        
-                                        if components:
-                                            _LOGGER.debug(f"Found {len(components)} components in bundle")
-                                            for i, comp in enumerate(components):
-                                                comp_type = comp.get("type", "Unknown")
-                                                comp_version = comp.get("toVersion", comp.get("version", ""))
-                                                
-                                                component_updates[f"componentUpdate{i+1}"] = {
-                                                    "id": next_version_info['bundleId'],
-                                                    "description": truncate_description(f"{comp_type} upgrade to {comp_version}"),
-                                                    "version": comp_version,
-                                                    "componentType": comp_type
-                                                }
-                                        else:
-                                            # Fallback: create a generic component update entry
-                                            component_updates["componentUpdate1"] = {
-                                                "id": next_version_info['bundleId'],
-                                                "description": truncate_description(f"VCF {next_version_info['versionNumber']} upgrade"),
-                                                "version": next_version_info['versionNumber'],
-                                                "componentType": "VCF_UPGRADE"
-                                            }
-                            else:
-                                error_text = await resp.text()
-                                _LOGGER.warning(f"Failed to get upgradables for domain {domain_name}: {resp.status} - {error_text}")
-                                
-                                # Create a fallback component entry when API fails
-                                component_updates["componentUpdate1"] = {
-                                    "id": next_version_info['bundleId'],
-                                    "description": truncate_description(f"VCF {next_version_info['versionNumber']} upgrade (details unavailable)"),
-                                    "version": next_version_info['versionNumber'],
-                                    "componentType": "VCF_UPGRADE"
-                                }
                     
                     # Determine final update status
                     update_status = "updates_available" if next_version_info else "up_to_date"
@@ -427,8 +310,7 @@ def get_coordinator(hass, config_entry):
                         "domain_prefix": prefix,
                         "current_version": current_version,
                         "update_status": update_status,
-                        "next_version": next_version_info,
-                        "component_updates": component_updates
+                        "next_version": next_version_info
                     }
                     
                     _LOGGER.info(f"Domain {domain_name} update status: {update_status}")
@@ -443,8 +325,7 @@ def get_coordinator(hass, config_entry):
                         "current_version": None,
                         "update_status": "error",
                         "error": str(e),
-                        "next_version": None,
-                        "component_updates": {}
+                        "next_version": None
                     }
             
             return {

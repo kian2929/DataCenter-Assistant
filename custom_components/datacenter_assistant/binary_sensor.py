@@ -139,8 +139,7 @@ class VCFUpdatesAvailableBinarySensor(CoordinatorEntity, BinarySensorEntity):
                     domains_with_updates.append({
                         "domainName": domain_data.get("domain_name"),
                         "current_version": domain_data.get("current_version"),
-                        "next_version": next_version.get("versionNumber"),
-                        "components_with_updates": len(domain_data.get("component_updates", {}))
+                        "next_version": next_version.get("versionNumber")
                     })
             
             return {
