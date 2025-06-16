@@ -1,0 +1,219 @@
+
+For each domain, there should be an entity to allow user to trigger upgrade to the available new version of VCF. Named someting like "VCF domainX Start Upgrade"
+This entity should be a button, and if it is pressed when there's no VCF update available, they should be a message in Home Asistant stating a relevant situation. then this flow is done.
+If it was pressed when there is a update available, a relevant message should be also displayed and the flow below should start executing.
+
+The entity "VCF domainX Status" should change to value "update_process_started"
+
+There should be another entity to track update status, maybe something like "VCF domainX Upgrade Status". This should have value "waiting_for_initiation" when there is no update flow happening
+There should be another entity to track update logs, maybe something like "VCF domainX Upgrade Logs". I want to use this entity to deliver dynamic markdown messages to a dashboard card. Default value should be a tidy markdown saying "No Messages" or something like that.
+
+For each domain with update available, following should be done...
+
+----------
+
+we need to "target" the next vcf version for the domain we are working on.
+
+"VCF domainX Upgrade Status" should change to "targeting_new_vcf_version"
+
+Following endpoint is used to do this "targeting"
+PATCH /v1/releases/domains/{domainID} (We already capture the domain ID in coordinator.py)
+
+request body should have:
+{
+    "targetVersion": "<next VCF version here>" (I think we get it with next_release.get("version") but double check it.)
+}
+look into API reference if you need more details about response structure.
+
+-----------
+
+After targeting is done, we should download all necessary bundles. "VCF domainX Upgrade Status" should change to "downloading_bundles".
+
+Downloading of a given bundle is done with this endpoint (only one bundle at a time):
+PATCH /v1/bundles/{bundleID}
+in request body should be "downloadNow": true (check API referece for exact implementation)
+
+You can check if download&validation is complete by repeadetly calling this endpoint (do this in 30sec interval)
+GET /v1/bundles/{bundleID}
+Check until you see "downloadStatus": "SUCCESSFUL". (see API reference if you need to know exact notation and response structure)
+
+
+You will get the bundles to download from next_release_info["patchBundles"] (<- this returns a list of items. Each item has "bundleId", which is what we are looking for)
+You need to get each bundleId and download them with the information given above.
+
+-----------
+
+After all downloads are complete, we want to run pre-checks.
+Before we can run pre-checks, we need too get what "check-"sets" are available for our VCF components.
+
+This has to be done like this:
+
+Firstly, we need to make this call:
+POST /v1/system/check-sets/queries
+we need to have this request body:
+{
+    "checkSetType": "UPGRADE",
+    "domains": [
+        {
+            "domainId": "<domain ID here>"
+        }
+    ]
+}
+
+Then, we will get a response with response body "CheckSetQueryResult" model (see API reference).
+You'd need to temporarily capture each "resourceType" from this structure.
+
+Secondly, we need to call the same endpoint, but with a slightly different request body:
+POST /v1/system/check-sets/queries
+we need to have this request body, however, following needs to be done too.
+> all resources should be added to the request body.
+> resourceType comes from the previous step.
+> targetVersion comes from next_release_info (coordinator.py). next_release_info["bom"] is a list of items where each item has "name" and "version". You'd need to match "name" with "resourceType" and extract the respective "version", which will be used as the "targetVersion". Obviously this is valid for each resource we detect in the first step.
+
+{
+    "checkSetType": "UPGRADE",
+    "domains": [
+        {
+            "domainId": "<domain ID here>"
+            "resources": [
+                {
+                    "resourceType": "<resourceType>",
+                    "resourceTargetVersion": "<targetVersion>"
+                }
+            ]
+        }
+    ]
+}
+
+Then, we will get a response with response body "CheckSetQueryResult" model (see API reference).
+We will use this response json to make our next request, however, first we need to modify it a bit:
+
+> at the same level as "queryId", add another key like this:
+"metadata": {
+  "targetVersion": "<target VCF version>" (we already know this in coordinator.py)
+}
+> each resource should have no field other than "resourceType", "resourceId", "resourceName", "domain" and "checkSets"
+> "checkSets" of each resource is a list of items. In each item, there may be nothing other than "checkSetId"
+
+In the end, it should look something like this (example):
+{
+    "resources": [
+        {
+            "resourceType": "VCENTER",
+            "resourceId": "9059849b-d310-4c5e-915b-2ad42bc3e842",
+            "resourceName": "vcf-m01-vc01.hka-enbw-projektarbeit.com",
+            "domain": {
+                "domainId": "5d73e7e4-5ef6-4a69-ab9b-1237484054dd",
+                "domainName": "vcf-m01",
+                "domainType": "MANAGEMENT"
+            },
+            "checkSets": [
+                {
+                    "checkSetId": "vcenter-upgrade-perspective-VCF_5x"
+                }
+            ]
+        }
+    ],
+    "queryId": "09c0804c-b941-43de-9c43-0bc7e6cc490b",
+    "metadata": {
+        "targetVersion": "5.2.1.0"
+    }
+}
+
+
+We will use this json we modified as the request body of the next call we are going to make:
+POST /v1/system/check-sets
+(so here we will use the modified json as the request body)
+
+In the response body of this request, there will be a "id" we need to capture (check API reference > "Task" model). Using this id (aka runId), we will continiously check for the current status of the pre-check operation (do it every 30seconds).
+This can be done with this endpoint:
+GET /v1/system/check-sets/{runId} 
+
+look into API reference if you need more details about response structure.
+Essentially, you'd check if "status" == "COMPLETED_WITH_SUCCESS"
+If it becomes "COMPLETED_WITH_FAILURE" at anty point, fail the whole upgrading process.
+
+Once it is completed, we will get a response body with "AssessmentOutput" model (see API reference).
+Capture these information (both are integer):
+AssessmentOutput > presentedArtifactsMap > validation-domain-summary[0] > warningGapsCount
+AssessmentOutput > presentedArtifactsMap > validation-domain-summary[0] > errorValidationsCount
+
+If any of them is > 0, have a nice markdown value in "VCF domainX Upgrade Logs" displaying this
+
+"""
+Errors: <errorValidationsCount>
+Warnings: <warningGapsCount>
+
+More details:
+https://<domain["sddc_manager_fqdn"]>/ui/sddc-manager/inventory/domains/mgmt-vi-domains/<domain ID>/updates/pre-check-details/DOMAIN/<domain ID>/false(monitoring-panel:monitoring/tasks)?assessmentId=<runId from above>
+
+Waiting for acknowledgement...
+"""
+
+Then wait until the entity "VCF domainX acknowlege alerts" is pressed (we need to implement this, should be a button)
+
+
+If, however, both of them are = 0, then have a nice markdown value in "VCF domainX Upgrade Logs" displaying this
+"""
+Pre-check passed successfuly. No warnings or errors. Continuing...
+"""
+And just continue.
+
+----------
+
+After we are finally done with the pre-check, we want to start upgrading components.
+Following endpoint gives us what can be upgraded next:
+GET /v1/upgradables/domains/<domainId>?targetVersion=<target VCF version>
+
+A response body with "PageOfUpgradable" model will be returned (see API reference)
+Pay attention to "bundleId" and "bundleType" of an Ugradable object that has "status" == "AVAILABLE"
+
+if in such Ugradable-object, "bundleType" == "SDDC_MANAGER", we must do this upgrade first, as this is a SDDC manager upgrade. Keep in mind , during the upgrade of SDDC Manager, the API will become completely unavailable. I would expect it to say unavailable for at least 1 hour.
+But you should have a mechanism to check if it available again somehow. Thing is, Even when it becomes pingable, it might not be ready yet. Best would be trying to GET /vi/domains and try until it works again. When it starts working, wait additional 5 minutes.
+
+if there are multiple such Ugradable objects (pay attention, we are talking about ones that have "status" == "AVAILABLE"), then you may do them in order of apperance.
+
+
+TODO TODO TODO TODO TODO
+
+
+
+
+
+
+
+
+you could refer to https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/upgrades/ and more importantly to https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/upgrades/post/on how to do the upgrades
+
+
+Go through all component upgrades in a similar fashion.
+
+I know this is complitcated. You'd need to try & fail with some test scripts. Refer to API reference when you need it.
+
+-------
+
+After going through all upgardes, if nothing left, do
+POST /v1/releases/domains/{domainID}/validations
+
+and you should have a body like this (generally you don't need more K-V, just one below is enough according to my tests. Otherwise, additional keys with empty values bring you back errors):
+
+{
+    "targetVersion": "5.2.1.0" (<- so, next VCF version here)
+}
+
+look into API reference if you need more details. 
+
+You'd have a response and in this response there's "executionStatus" K-V. It can be IN_PROGRESS, FAILED, COMPLETED, UNKNOWN, SKIPPED, CANCELLED, CANCELLATION_IN_PROGRESS
+
+If you have "COMPLETED", then set "VCF domainX Upgrade Status" value "successfuly_completed"
+then set it to default "waiting_for_initiation"
+
+If you have anything else, fail.
+
+-------------------------
+
+IF AT ANY POINT WE FAIL OR REACH A TIMEOUT set "VCF domainX Upgrade Status" to "failed"
+
+-------------------------
+
+in "VCF domainX Upgrade Logs" show the default "No Messages" or something

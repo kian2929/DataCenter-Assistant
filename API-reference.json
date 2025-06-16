@@ -32578,7 +32578,7 @@
                 "properties": {
                     "enabled": {
                         "type": "boolean",
-                        "description": "VCF FIPS mode status",
+                        "description": "CheckSetQueryResult",
                         "readOnly": true
                     }
                 },
