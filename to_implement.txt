@@ -120,6 +120,7 @@ In the end, it should look something like this (example):
     }
 }
 
+Please capture the resourceId and resourceType for each resource. This will be needed during the execution of the upgrades later on. Reference: 31845321
 
 We will use this json we modified as the request body of the next call we are going to make:
 POST /v1/system/check-sets
@@ -166,13 +167,112 @@ Following endpoint gives us what can be upgraded next:
 GET /v1/upgradables/domains/<domainId>?targetVersion=<target VCF version>
 
 A response body with "PageOfUpgradable" model will be returned (see API reference)
-Pay attention to "bundleId" and "bundleType" of an Ugradable object that has "status" == "AVAILABLE"
+Pay attention to "bundleId" and "status" of an Ugradable object that has "status" == "AVAILABLE"
+If there are multiple such Ugradable objects (pay attention, we are talking about ones that have "status" == "AVAILABLE"), then you may do them in order of apperance.
 
-if in such Ugradable-object, "bundleType" == "SDDC_MANAGER", we must do this upgrade first, as this is a SDDC manager upgrade. Keep in mind , during the upgrade of SDDC Manager, the API will become completely unavailable. I would expect it to say unavailable for at least 1 hour.
+Once we do this, we have a bundleId in hand that we can look-up what component it belongs to with this endpoint:
+
+GET /v1/bundles/{bundleId}
+
+Response body will be "Bundle" model (see API reference)
+Essentiallly we'd need to see components[0]["type"] to figure what component this is.
+
+
+> If we capture "SDDC_MANAGER" in the value (partial match), it means SDDC manager will be upgraded.
+Keep in mind, during the upgrade of SDDC Manager, the API will become completely unavailable. I would expect it to say unavailable for 1 hour.
 But you should have a mechanism to check if it available again somehow. Thing is, Even when it becomes pingable, it might not be ready yet. Best would be trying to GET /vi/domains and try until it works again. When it starts working, wait additional 5 minutes.
 
-if there are multiple such Ugradable objects (pay attention, we are talking about ones that have "status" == "AVAILABLE"), then you may do them in order of apperance.
+You would execute this upgrade via this endpoint:
+POST /v1/upgrades
+with the body
 
+{
+    "bundleId": "<bundleId>",
+    "resourceType": "DOMAIN", TO REVIEW TO REVIEW TO REVIEW
+    "resourceUpgradeSpecs": [
+        {
+            "resourceId": "<domainId>",
+            "upgradeNow": true
+        }
+    ]
+}
+
+
+> If we capture "NSX_T_MANAGER" in the value (partial match), it means NSX will be upgraded. Here are some special instructions:
+Keep in mind, NSX upgrade takes at least 3 hours.
+
+First, do a call to this enpoint:
+GET /v1/upgradables/domains/<domainId>/nsxt?bundleId=<bundleId>
+
+Response body will be "NsxtResources" model. See API reference.
+You need nsxtManagerCluster["id"] and nsxtHostClusters["id"] for the next step
+
+Secondly, do this call to execute the upgrade:
+
+POST /v1/upgrades
+with the body
+{
+  "bundleId": "<bundleId>",
+  "resourceType": "DOMAIN", TO REVIEW TO REVIEW TO REVIEW
+  "draftMode": false,
+  "nsxtUpgradeUserInputSpecs":
+    [
+      {
+        "nsxtUpgradeOptions":
+          {
+            "isEdgeOnlyUpgrade": false,
+            "isHostClustersUpgradeParallel": true,
+            "isEdgeClustersUpgradeParallel": true
+          },
+        "nsxtId": "<nsxtManagerCluster["id"] from previous step>",
+        "nsxtHostClusterUpgradeSpecs":
+          [
+            {
+              "hostClusterId": "<nsxtHostClusters["id"] from previous step>",
+              "liveUpgrade": false,
+              "hostParallelUpgrade": false
+            }
+          ]
+      }
+    ],
+  "resourceUpgradeSpecs":
+    [
+      {
+        "resourceId": "<domainId>",
+        "upgradeNow": true
+      }
+    ]
+}
+
+
+
+> If we capture "VCENTER" in the value (partial match), it means NSX will be upgraded. Do this call to execute the upgrade:
+Keep in mind, VCENTER upgrade take at least and you might get authorization errors during the process when doing progress check calls.
+
+POST /v1/upgrades
+with the body
+
+{
+    "bundleId": "<bundleId>",
+    "resourceType": "DOMAIN", TO REVIEW TO REVIEW TO REVIEW
+    "resourceUpgradeSpecs": [
+        {
+            "resourceId": "<domainId>",
+            "upgradeNow": true
+        }
+    ],
+    "vcenterUpgradeUserInputSpecs": [
+        {
+            "resourceId": "<See the reference 31845321 above. Need to use recourceId of the resourceType "VCENTER>",
+            "upgradeMechanism": "InPlace"
+        }
+    ]
+}
+
+
+
+
+> If we capture "ESX_HOST" in the value (partial match), it means ESX hosts will be upgraded. Here are some special instructions:
 
 TODO TODO TODO TODO TODO
 
@@ -180,19 +280,20 @@ TODO TODO TODO TODO TODO
 
 
 
+After starting the execution of an upgrade, if the request was successful, the response body will be "Task" model. See API reference.
+From this response body, you would want to make a note of "id" to repeadetly check the task status with this endpoint (make it in 30seconds intervals):
+GET /v1/upgrades/{id}
 
+Response body will be "Upgrade" model. See API reference.
+Essentiallly, we will keep checking&waiting until "status" == "COMPLETED_WITH_SUCCESS"
 
+Obviously, each time we complete an upgrade of a component, we need to go back to the step where we checked what can be upgraded next and go through until there's nothing left to upgrade in the response of 
+GET /v1/upgradables/domains/<domainId>?targetVersion=<target VCF version>
+A response body with "PageOfUpgradable" model will be returned (see API reference)
 
-you could refer to https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/upgrades/ and more importantly to https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/upgrades/post/on how to do the upgrades
+------------
 
-
-Go through all component upgrades in a similar fashion.
-
-I know this is complitcated. You'd need to try & fail with some test scripts. Refer to API reference when you need it.
-
--------
-
-After going through all upgardes, if nothing left, do
+After going through all upgardes, do
 POST /v1/releases/domains/{domainID}/validations
 
 and you should have a body like this (generally you don't need more K-V, just one below is enough according to my tests. Otherwise, additional keys with empty values bring you back errors):
