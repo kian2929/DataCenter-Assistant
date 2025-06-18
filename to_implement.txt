@@ -3,8 +3,6 @@ For each domain, there should be an entity to allow user to trigger upgrade to t
 This entity should be a button, and if it is pressed when there's no VCF update available, they should be a message in Home Asistant stating a relevant situation. then this flow is done.
 If it was pressed when there is a update available, a relevant message should be also displayed and the flow below should start executing.
 
-The entity "VCF domainX Status" should change to value "update_process_started"
-
 There should be another entity to track update status, maybe something like "VCF domainX Upgrade Status". This should have value "waiting_for_initiation" when there is no update flow happening
 There should be another entity to track update logs, maybe something like "VCF domainX Upgrade Logs". I want to use this entity to deliver dynamic markdown messages to a dashboard card. Default value should be a tidy markdown saying "No Messages" or something like that.
 
@@ -30,11 +28,11 @@ look into API reference if you need more details about response structure.
 After targeting is done, we should download all necessary bundles. "VCF domainX Upgrade Status" should change to "downloading_bundles".
 
 Downloading of a given bundle is done with this endpoint (only one bundle at a time):
-PATCH /v1/bundles/{bundleID}
+PATCH /v1/bundles/{id} (bundleID)
 in request body should be "downloadNow": true (check API referece for exact implementation)
 
 You can check if download&validation is complete by repeadetly calling this endpoint (do this in 30sec interval)
-GET /v1/bundles/{bundleID}
+GET /v1/bundles/{id} (bundleID)
 Check until you see "downloadStatus": "SUCCESSFUL". (see API reference if you need to know exact notation and response structure)
 
 
@@ -174,7 +172,7 @@ If there are multiple such Ugradable objects (pay attention, we are talking abou
 
 Once we do this, we have a bundleId in hand that we can look-up what component it belongs to with this endpoint:
 
-GET /v1/bundles/{bundleId}
+GET /v1/bundles/{id} (bundleId)
 
 Response body will be "Bundle" model (see API reference)
 Essentiallly we'd need to see components[0]["type"] to figure what component this is.
@@ -182,7 +180,7 @@ Essentiallly we'd need to see components[0]["type"] to figure what component thi
 
 > If we capture "SDDC_MANAGER" in the value (partial match), it means SDDC manager will be upgraded. "VCF domainX Upgrade Status" should change to "upgrading_sddcmanager"
 Keep in mind, during the upgrade of SDDC Manager, the API will become completely unavailable. I would expect it to say unavailable for 1 hour.
-But you should have a mechanism to check if it available again somehow. Thing is, Even when it becomes pingable, it might not be ready yet. Best would be trying to GET /vi/domains and try until it works again. When it starts working, wait additional 5 minutes.
+But you should have a mechanism to check if it available again somehow. Thing is, Even when it becomes pingable, it might not be ready yet. Best would be trying to GET /v1/domains and try until it works again. When it starts working, wait additional 5 minutes.
 
 You would execute this upgrade via this endpoint:
 POST /v1/upgrades
@@ -207,7 +205,7 @@ First, do a call to this enpoint:
 GET /v1/upgradables/domains/<domainId>/nsxt?bundleId=<bundleId>
 
 Response body will be "NsxtResources" model. See API reference.
-You need nsxtManagerCluster["id"] and nsxtHostClusters["id"] for the next step
+You need nsxtManagerCluster["id"] and nsxtHostClusters["id"] for the next step. If multiple nsxtHostClusters, get the first one.
 
 Secondly, do this call to execute the upgrade:
 
@@ -265,7 +263,7 @@ with the request body
     ],
     "vcenterUpgradeUserInputSpecs": [
         {
-            "resourceId": "<See the reference ref_46833845 above. Need to use recourceId of the resourceType "VCENTER>",
+            "resourceId": "<See the part I referenced with ref_46833845 above. From what's mentioned there we need to use "resourceId" where resourceType == VCENTER>",
             "upgradeMechanism": "InPlace"
         }
     ]
@@ -315,7 +313,7 @@ If you have anything else, fail.
 
 -------------------------
 
-IF AT ANY POINT WE FAIL OR REACH A TIMEOUT set "VCF domainX Upgrade Status" to "failed"
+IF AT ANY POINT WE FAIL OR REACH A TIMEOUT OR SOMETHING UNEXPECTED HAPPENS log it and set "VCF domainX Upgrade Status" to "failed"
 
 -------------------------
 
