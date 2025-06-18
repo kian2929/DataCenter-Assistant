@@ -43,7 +43,7 @@ You need to get each bundleId and download them with the information given above
 
 -----------
 
-After all downloads are complete, we want to run pre-checks.
+After all downloads are complete, we want to run pre-checks. "VCF domainX Upgrade Status" should change to "running_prechecks"
 Before we can run pre-checks, we need too get what "check-"sets" are available for our VCF components.
 
 This has to be done like this:
@@ -120,7 +120,7 @@ In the end, it should look something like this (example):
     }
 }
 
-Please capture the resourceId and resourceType for each resource. This will be needed during the execution of the upgrades later on. Reference: 31845321
+Please capture the resourceId and resourceType for each resource. This will be needed during the execution of the upgrades later on. Reference: ref_46833845
 
 We will use this json we modified as the request body of the next call we are going to make:
 POST /v1/system/check-sets
@@ -151,7 +151,7 @@ https://<domain["sddc_manager_fqdn"]>/ui/sddc-manager/inventory/domains/mgmt-vi-
 Waiting for acknowledgement...
 """
 
-Then wait until the entity "VCF domainX acknowlege alerts" is pressed (we need to implement this, should be a button)
+Then wait until the entity "VCF domainX acknowlege alerts" is pressed (we need to implement this, should be a button) (also "VCF domainX Upgrade Status" should change to "waiting_acknowledgement")
 
 
 If, however, both of them are = 0, then have a nice markdown value in "VCF domainX Upgrade Logs" displaying this
@@ -162,13 +162,15 @@ And just continue.
 
 ----------
 
-After we are finally done with the pre-check, we want to start upgrading components.
+After we are finally done with the pre-check, we want to start upgrading components. "VCF domainX Upgrade Status" should change to "starting_upgrades"
 Following endpoint gives us what can be upgraded next:
 GET /v1/upgradables/domains/<domainId>?targetVersion=<target VCF version>
 
 A response body with "PageOfUpgradable" model will be returned (see API reference)
 Pay attention to "bundleId" and "status" of an Ugradable object that has "status" == "AVAILABLE"
 If there are multiple such Ugradable objects (pay attention, we are talking about ones that have "status" == "AVAILABLE"), then you may do them in order of apperance.
+
+--
 
 Once we do this, we have a bundleId in hand that we can look-up what component it belongs to with this endpoint:
 
@@ -178,17 +180,17 @@ Response body will be "Bundle" model (see API reference)
 Essentiallly we'd need to see components[0]["type"] to figure what component this is.
 
 
-> If we capture "SDDC_MANAGER" in the value (partial match), it means SDDC manager will be upgraded.
+> If we capture "SDDC_MANAGER" in the value (partial match), it means SDDC manager will be upgraded. "VCF domainX Upgrade Status" should change to "upgrading_sddcmanager"
 Keep in mind, during the upgrade of SDDC Manager, the API will become completely unavailable. I would expect it to say unavailable for 1 hour.
 But you should have a mechanism to check if it available again somehow. Thing is, Even when it becomes pingable, it might not be ready yet. Best would be trying to GET /vi/domains and try until it works again. When it starts working, wait additional 5 minutes.
 
 You would execute this upgrade via this endpoint:
 POST /v1/upgrades
-with the body
+with the request body
 
 {
     "bundleId": "<bundleId>",
-    "resourceType": "DOMAIN", TO REVIEW TO REVIEW TO REVIEW
+    "resourceType": "DOMAIN",
     "resourceUpgradeSpecs": [
         {
             "resourceId": "<domainId>",
@@ -198,7 +200,7 @@ with the body
 }
 
 
-> If we capture "NSX_T_MANAGER" in the value (partial match), it means NSX will be upgraded. Here are some special instructions:
+> If we capture "NSX_T_MANAGER" in the value (partial match), it means NSX will be upgraded. "VCF domainX Upgrade Status" should change to "upgrading_nsx". Here are some special instructions: 
 Keep in mind, NSX upgrade takes at least 3 hours.
 
 First, do a call to this enpoint:
@@ -210,10 +212,10 @@ You need nsxtManagerCluster["id"] and nsxtHostClusters["id"] for the next step
 Secondly, do this call to execute the upgrade:
 
 POST /v1/upgrades
-with the body
+with the request body
 {
   "bundleId": "<bundleId>",
-  "resourceType": "DOMAIN", TO REVIEW TO REVIEW TO REVIEW
+  "resourceType": "DOMAIN",
   "draftMode": false,
   "nsxtUpgradeUserInputSpecs":
     [
@@ -246,15 +248,15 @@ with the body
 
 
 
-> If we capture "VCENTER" in the value (partial match), it means NSX will be upgraded. Do this call to execute the upgrade:
-Keep in mind, VCENTER upgrade take at least and you might get authorization errors during the process when doing progress check calls.
+> If we capture "VCENTER" in the value (partial match), it means vCenter will be upgraded."VCF domainX Upgrade Status" should change to "upgrading_vcenter" Do this call to execute the upgrade:
+Keep in mind, VCENTER upgrade take at least and you might get authorization errors during the process when doing progress-check calls.
 
 POST /v1/upgrades
-with the body
+with the request body
 
 {
     "bundleId": "<bundleId>",
-    "resourceType": "DOMAIN", TO REVIEW TO REVIEW TO REVIEW
+    "resourceType": "DOMAIN",
     "resourceUpgradeSpecs": [
         {
             "resourceId": "<domainId>",
@@ -263,7 +265,7 @@ with the body
     ],
     "vcenterUpgradeUserInputSpecs": [
         {
-            "resourceId": "<See the reference 31845321 above. Need to use recourceId of the resourceType "VCENTER>",
+            "resourceId": "<See the reference ref_46833845 above. Need to use recourceId of the resourceType "VCENTER>",
             "upgradeMechanism": "InPlace"
         }
     ]
@@ -272,13 +274,13 @@ with the body
 
 
 
-> If we capture "ESX_HOST" in the value (partial match), it means ESX hosts will be upgraded. Here are some special instructions:
+> If we capture "ESX_HOST" in the value (partial match), it means ESX hosts will be upgraded. "VCF domainX Upgrade Status" should change to "upgrading_esx_cluster" Here are some special instructions:
 
 TODO TODO TODO TODO TODO
 
 
 
-
+-----------
 
 After starting the execution of an upgrade, if the request was successful, the response body will be "Task" model. See API reference.
 From this response body, you would want to make a note of "id" to repeadetly check the task status with this endpoint (make it in 30seconds intervals):
@@ -296,7 +298,7 @@ A response body with "PageOfUpgradable" model will be returned (see API referenc
 After going through all upgardes, do
 POST /v1/releases/domains/{domainID}/validations
 
-and you should have a body like this (generally you don't need more K-V, just one below is enough according to my tests. Otherwise, additional keys with empty values bring you back errors):
+and you should have a request body like this:
 
 {
     "targetVersion": "5.2.1.0" (<- so, next VCF version here)
@@ -317,4 +319,4 @@ IF AT ANY POINT WE FAIL OR REACH A TIMEOUT set "VCF domainX Upgrade Status" to "
 
 -------------------------
 
-in "VCF domainX Upgrade Logs" show the default "No Messages" or something
+in "VCF domainX Upgrade Logs" show the default "No Messages" at the end
