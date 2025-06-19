@@ -271,7 +271,7 @@ class VCFUpgradeService:
         self.set_upgrade_logs(domain_id, "**Running Pre-checks**\n\nRunning upgrade pre-checks...")
         
         try:
-            # Step 1: Get available check-sets
+            # Step 1: Get available check-sets (initial query)
             _LOGGER.debug(f"Domain {domain_id}: Step 1 - Getting available check-sets")
             query_data = {
                 "checkSetType": "UPGRADE",
@@ -282,8 +282,8 @@ class VCFUpgradeService:
             first_response = await self.vcf_client.api_request("/v1/system/check-sets/queries", method="POST", data=query_data)
             _LOGGER.debug(f"Domain {domain_id}: Initial check-sets response: {first_response}")
             
-            # Extract resource types
-            resources_data = []
+            # Extract resource types from initial response
+            initial_resources_data = []
             first_response_resources = first_response.get("resources", [])
             _LOGGER.info(f"Domain {domain_id}: Found {len(first_response_resources) if isinstance(first_response_resources, list) else 0} resources in initial response")
             
@@ -298,13 +298,13 @@ class VCFUpgradeService:
                         _LOGGER.info(f"Domain {domain_id}: Initial resource {i} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}, Check sets: {num_check_sets}")
                         
                         if resource_type:
-                            # Store the complete resource data for later processing
-                            resources_data.append({
+                            # Store the complete initial resource data
+                            initial_resources_data.append({
                                 "resourceType": resource_type,
                                 "resourceId": resource_id,
                                 "resourceName": resource_name,
                                 "domain": resource.get("domain"),
-                                "checkSets": resource.get("checkSets", [])  # Store check sets from initial response
+                                "checkSets": resource.get("checkSets", [])
                             })
                         else:
                             _LOGGER.warning(f"Domain {domain_id}: Skipping resource {i} with no resource type: {resource}")
@@ -313,9 +313,9 @@ class VCFUpgradeService:
             else:
                 _LOGGER.warning(f"Domain {domain_id}: Initial response resources is not a list: {first_response_resources}")
             
-            _LOGGER.info(f"Domain {domain_id}: Processed {len(resources_data)} valid resources from initial response")
+            _LOGGER.info(f"Domain {domain_id}: Processed {len(initial_resources_data)} valid resources from initial response")
             
-            # Step 2: Get target versions for resources
+            # Step 2: Process BOM (Bill of Materials) and prepare resources with target versions
             _LOGGER.debug(f"Domain {domain_id}: Step 2 - Processing BOM (Bill of Materials)")
             bom_data = next_release.get("bom", [])
             _LOGGER.info(f"Domain {domain_id}: Found {len(bom_data) if isinstance(bom_data, list) else 0} BOM entries")
@@ -332,48 +332,69 @@ class VCFUpgradeService:
             
             _LOGGER.info(f"Domain {domain_id}: Created BOM mapping for {len(bom_map)} components: {list(bom_map.keys())}")
             
-            # Prepare resources with target versions
+            # Build resources with target versions for detailed query (only for resources that have target versions)
             resources_with_versions = []
             _LOGGER.debug(f"Domain {domain_id}: Mapping resources to target versions")
             
-            for resource_data in resources_data:
+            for resource_data in initial_resources_data:
                 resource_type = resource_data["resourceType"]
                 target_resource_version = bom_map.get(resource_type)
                 
                 _LOGGER.debug(f"Domain {domain_id}: Resource {resource_type} -> Target version: {target_resource_version}")
                 
-                resource_spec = {"resourceType": resource_type}
-                
                 if target_resource_version:
-                    resource_spec["resourceTargetVersion"] = target_resource_version
+                    resource_spec = {
+                        "resourceType": resource_type,
+                        "resourceTargetVersion": target_resource_version
+                    }
+                    resources_with_versions.append(resource_spec)
                     _LOGGER.info(f"Domain {domain_id}: Mapped {resource_type} to version {target_resource_version}")
                 else:
                     _LOGGER.info(f"Domain {domain_id}: Including {resource_type} without target version (will use check sets from initial response)")
-                
-                # Always include the resource in the detailed query, even without target version
-                resources_with_versions.append(resource_spec)
             
             _LOGGER.info(f"Domain {domain_id}: {len(resources_with_versions)} resources prepared for detailed query")
             
-            # Step 3: Get detailed check-sets
-            _LOGGER.debug(f"Domain {domain_id}: Step 3 - Getting detailed check-sets")
-            detailed_query_data = {
-                "checkSetType": "UPGRADE",
-                "domains": [{
-                    "domainId": domain_id,
-                    "resources": resources_with_versions
-                }]
-            }
+            # Step 3: Get detailed check-sets (only for resources with target versions)
+            detailed_resources_data = []
+            if resources_with_versions:
+                _LOGGER.debug(f"Domain {domain_id}: Step 3 - Getting detailed check-sets")
+                detailed_query_data = {
+                    "checkSetType": "UPGRADE",
+                    "domains": [{
+                        "domainId": domain_id,
+                        "resources": resources_with_versions
+                    }]
+                }
+                
+                _LOGGER.debug(f"Domain {domain_id}: Sending detailed check-sets query: {detailed_query_data}")
+                second_response = await self.vcf_client.api_request("/v1/system/check-sets/queries", method="POST", data=detailed_query_data)
+                _LOGGER.debug(f"Domain {domain_id}: Detailed check-sets response keys: {list(second_response.keys()) if isinstance(second_response, dict) else 'Not a dict'}")
+                
+                query_id = second_response.get("queryId")
+                _LOGGER.info(f"Domain {domain_id}: Got query ID: {query_id}")
+                
+                # Extract detailed resources
+                second_response_resources = second_response.get("resources", [])
+                if isinstance(second_response_resources, list):
+                    for i, resource in enumerate(second_response_resources, 1):
+                        if isinstance(resource, dict):
+                            resource_type = resource.get("resourceType")
+                            resource_id = resource.get("resourceId")
+                            resource_name = resource.get("resourceName")
+                            num_check_sets = len(resource.get("checkSets", [])) if isinstance(resource.get("checkSets"), list) else 0
+                            
+                            _LOGGER.info(f"Domain {domain_id}: Detailed resource {i} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}, Check sets: {num_check_sets}")
+                            
+                            if resource_type:
+                                detailed_resources_data.append(resource)
+                
+                _LOGGER.info(f"Domain {domain_id}: Processed {len(detailed_resources_data)} resources from detailed response")
+            else:
+                query_id = first_response.get("queryId")
+                _LOGGER.info(f"Domain {domain_id}: No resources with target versions, using initial query ID: {query_id}")
             
-            _LOGGER.debug(f"Domain {domain_id}: Sending detailed check-sets query: {detailed_query_data}")
-            second_response = await self.vcf_client.api_request("/v1/system/check-sets/queries", method="POST", data=detailed_query_data)
-            _LOGGER.debug(f"Domain {domain_id}: Detailed check-sets response keys: {list(second_response.keys()) if isinstance(second_response, dict) else 'Not a dict'}")
-            
-            query_id = second_response.get("queryId")
-            _LOGGER.info(f"Domain {domain_id}: Got query ID: {query_id}")
-            
-            # Step 4: Prepare and execute check-sets
-            _LOGGER.debug(f"Domain {domain_id}: Step 4 - Preparing check-sets for execution")
+            # Step 4: Build final check-sets request data
+            _LOGGER.debug(f"Domain {domain_id}: Step 4 - Building final check-sets request")
             check_set_data = {
                 "resources": [],
                 "queryId": query_id,
@@ -382,38 +403,25 @@ class VCFUpgradeService:
                 }
             }
             
-            # Store resource info for later use and build comprehensive check-sets data
+            # Store resource info for later use
             resource_info = {}
             
-            # Create a map of detailed response resources by type for easy lookup
+            # Create map of detailed resources by type for lookup
             detailed_resources_map = {}
-            second_response_resources = second_response.get("resources", [])
-            _LOGGER.info(f"Domain {domain_id}: Processing {len(second_response_resources) if isinstance(second_response_resources, list) else 0} resources from detailed response")
+            for resource in detailed_resources_data:
+                resource_type = resource.get("resourceType")
+                if resource_type:
+                    detailed_resources_map[resource_type] = resource
             
-            if isinstance(second_response_resources, list):
-                for i, resource in enumerate(second_response_resources, 1):
-                    if isinstance(resource, dict):
-                        resource_type = resource.get("resourceType")
-                        resource_id = resource.get("resourceId")
-                        resource_name = resource.get("resourceName")
-                        num_check_sets = len(resource.get("checkSets", [])) if isinstance(resource.get("checkSets"), list) else 0
-                        
-                        _LOGGER.info(f"Domain {domain_id}: Detailed response resource {i} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}, Check sets: {num_check_sets}")
-                        
-                        if resource_type:
-                            detailed_resources_map[resource_type] = resource
+            # Process all initial resources and use detailed data when available
+            _LOGGER.info(f"Domain {domain_id}: Building final check-sets data using all {len(initial_resources_data)} initial resources")
             
-            _LOGGER.info(f"Domain {domain_id}: Mapped {len(detailed_resources_map)} resources from detailed response: {list(detailed_resources_map.keys())}")
-            
-            # Now process ALL resources from the initial response, using detailed response when available
-            _LOGGER.info(f"Domain {domain_id}: Building final check-sets data using all {len(resources_data)} initial resources")
-            
-            for i, initial_resource in enumerate(resources_data, 1):
+            for i, initial_resource in enumerate(initial_resources_data, 1):
                 resource_type = initial_resource["resourceType"]
                 resource_id = initial_resource["resourceId"]
                 resource_name = initial_resource["resourceName"]
                 
-                _LOGGER.info(f"Domain {domain_id}: Processing resource {i}/{len(resources_data)} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}")
+                _LOGGER.info(f"Domain {domain_id}: Processing resource {i}/{len(initial_resources_data)} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}")
                 
                 if resource_id and resource_type:
                     resource_info[resource_type] = resource_id
@@ -423,15 +431,14 @@ class VCFUpgradeService:
                     resource_to_use = detailed_resources_map[resource_type]
                     _LOGGER.debug(f"Domain {domain_id}: Using detailed response data for {resource_type}")
                 else:
-                    # Use the stored initial resource data (which now includes check sets)
                     resource_to_use = initial_resource
                     _LOGGER.info(f"Domain {domain_id}: Using initial response data for {resource_type} (not in detailed response)")
                 
-                # Prepare check sets data
+                # Build check sets list
                 check_sets_list = []
                 resource_check_sets = resource_to_use.get("checkSets", [])
                 
-                _LOGGER.info(f"Domain {domain_id}: Resource {resource_type} has {len(resource_check_sets) if isinstance(resource_check_sets, list) else 0} check sets from {'detailed' if resource_type in detailed_resources_map else 'initial'} response")
+                _LOGGER.info(f"Domain {domain_id}: Resource {resource_type} has {len(resource_check_sets) if isinstance(resource_check_sets, list) else 0} check sets")
                 
                 if isinstance(resource_check_sets, list):
                     for j, cs in enumerate(resource_check_sets, 1):
@@ -441,12 +448,10 @@ class VCFUpgradeService:
                             _LOGGER.debug(f"Domain {domain_id}: Check set {j} for {resource_type} - ID: {check_set_id}, Name: {check_set_name}")
                             if check_set_id:
                                 check_sets_list.append({"checkSetId": check_set_id})
-                else:
-                    _LOGGER.warning(f"Domain {domain_id}: Resource {resource_type} has invalid check sets data: {resource_check_sets}")
                 
                 _LOGGER.info(f"Domain {domain_id}: Added {len(check_sets_list)} valid check sets for resource {resource_type}")
                 
-                # Build the final resource entry using the most complete data available
+                # Build final resource entry
                 final_resource_entry = {
                     "resourceType": resource_to_use.get("resourceType"),
                     "resourceId": resource_to_use.get("resourceId"),
@@ -459,19 +464,10 @@ class VCFUpgradeService:
                 if domain_info:
                     final_resource_entry["domain"] = domain_info
                 
-                # Always add the resource to the final list, even if it has no check sets
                 check_set_data["resources"].append(final_resource_entry)
                 _LOGGER.debug(f"Domain {domain_id}: Added resource {resource_type} to final check-sets (with {len(check_sets_list)} check sets)")
             
             _LOGGER.info(f"Domain {domain_id}: Prepared check-sets for {len(check_set_data['resources'])} resources")
-            
-            # Log each resource in final check-set data
-            for i, resource in enumerate(check_set_data['resources'], 1):
-                resource_type = resource.get('resourceType')
-                num_check_sets = len(resource.get('checkSets', []))
-                _LOGGER.info(f"Domain {domain_id}: Final resource {i} - Type: {resource_type}, Check sets: {num_check_sets}")
-            
-            _LOGGER.debug(f"Domain {domain_id}: Final check-set data structure: {check_set_data}")
             
             # Store resource info for upgrade execution
             if domain_id not in self._upgrade_states:
@@ -480,7 +476,8 @@ class VCFUpgradeService:
             _LOGGER.debug(f"Domain {domain_id}: Stored resource info: {resource_info}")
             
             # Execute pre-checks
-            _LOGGER.info(f"Domain {domain_id}: Executing pre-checks...")
+            _LOGGER.info(f"Domain {domain_id}: Executing pre-checks with final check-set data...")
+            _LOGGER.debug(f"Domain {domain_id}: Final check-set data: {check_set_data}")
             precheck_response = await self.vcf_client.api_request("/v1/system/check-sets", method="POST", data=check_set_data)
             _LOGGER.debug(f"Domain {domain_id}: Pre-check execution response: {precheck_response}")
             
