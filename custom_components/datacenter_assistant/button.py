@@ -9,91 +9,71 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import get_coordinator
+from .vcf_api import VCFAPIClient
 
 _LOGGER = logging.getLogger(__name__)
 _DOMAIN = "datacenter_assistant"
 
+
+class VCFButtonManager:
+    """Manager class for VCF button entities."""
+    
+    def __init__(self, hass, entry):
+        self.hass = hass
+        self.entry = entry
+        self.vcf_client = VCFAPIClient(hass, entry)
+    
+    def create_buttons(self, coordinator):
+        """Create all VCF button entities."""
+        return [
+            VCFRefreshTokenButton(self.hass, self.entry, self.vcf_client),
+            VCFManualUpdateCheckButton(self.hass, self.entry, coordinator)
+        ]
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    """Set up the button platform."""
+    """Set up the button platform using OOP approach."""
     coordinator = hass.data.get(_DOMAIN, {}).get("coordinator")
     
     if not coordinator:
         coordinator = get_coordinator(hass, entry)
         hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     
-    entities = [
-        VCFRefreshTokenButton(hass, entry),
-        VCFManualUpdateCheckButton(hass, entry, coordinator)
-    ]
+    button_manager = VCFButtonManager(hass, entry)
+    entities = button_manager.create_buttons(coordinator)
     
     async_add_entities(entities)
 
 
 class VCFRefreshTokenButton(ButtonEntity):
-    """Button to refresh VCF token manually."""
+    """Button to refresh VCF token manually using API client."""
     
-    def __init__(self, hass, entry):
+    def __init__(self, hass, entry, vcf_client):
         self.hass = hass
         self.entry = entry
+        self.vcf_client = vcf_client
         self._attr_name = "VCF Refresh Token"
         self._attr_unique_id = f"{entry.entry_id}_vcf_manual_refresh"
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_icon = "mdi:refresh-circle"
     
     async def async_press(self) -> None:
-        """Handle button press to refresh token."""
+        """Handle button press to refresh token using API client."""
         _LOGGER.info("Manually refreshing VCF token")
         
-        vcf_url = self.entry.data.get("vcf_url")
-        vcf_username = self.entry.data.get("vcf_username", "")
-        vcf_password = self.entry.data.get("vcf_password", "")
-        
-        if not vcf_url or not vcf_username or not vcf_password:
-            _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
-            return
-            
         try:
-            # Direkter API-Aufruf für Token-Erneuerung
-            session = async_get_clientsession(self.hass)
-            login_url = f"{vcf_url}/v1/tokens"
+            # Use the API client's refresh method
+            new_token = await self.vcf_client.refresh_token()
             
-            auth_data = {
-                "username": vcf_username,
-                "password": vcf_password
-            }
-            
-            _LOGGER.info(f"Attempting to connect to {login_url}")
-            
-            async with session.post(login_url, json=auth_data, ssl=False) as resp:
-                if resp.status != 200:
-                    _LOGGER.error(f"VCF token refresh failed: {resp.status}")
-                    return
-                    
-                token_data = await resp.json()
-                new_token = token_data.get("accessToken") or token_data.get("access_token")
+            if new_token:
+                # Force update the coordinator to use the new token
+                coordinator = self.hass.data.get(_DOMAIN, {}).get("coordinator")
+                if coordinator:
+                    await coordinator.async_refresh()
+                _LOGGER.info("VCF token refreshed successfully")
+            else:
+                _LOGGER.warning("Failed to refresh VCF token")
                 
-                if new_token:
-                    # Aktualisiere die Konfiguration mit neuem Token und Ablaufzeit
-                    new_data = dict(self.entry.data)
-                    new_data["vcf_token"] = new_token
-                    
-                    # Token-Ablaufzeit berechnen (1 Stunde ab jetzt)
-                    expiry = int(time.time()) + 3600  # 1 Stunde in Sekunden
-                    new_data["token_expiry"] = expiry
-                    _LOGGER.info(f"New token will expire at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expiry))}")
-                    
-                    self.hass.config_entries.async_update_entry(
-                        self.entry, 
-                        data=new_data
-                    )
-                    
-                    # Force update des Coordinators
-                    coordinator = self.hass.data.get(_DOMAIN, {}).get("coordinator")
-                    if coordinator:
-                        await coordinator.async_refresh()
-                else:
-                    _LOGGER.warning("Could not extract token from response")
-                    
         except Exception as e:
             _LOGGER.error(f"Error refreshing VCF token: {e}")
 

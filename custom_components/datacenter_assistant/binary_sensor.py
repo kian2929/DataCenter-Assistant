@@ -7,8 +7,22 @@ _LOGGER = logging.getLogger(__name__)
 _DOMAIN = "datacenter_assistant"
 
 
+class VCFBinarySensorManager:
+    """Manager class for VCF binary sensor entities."""
+    
+    def __init__(self, coordinator):
+        self.coordinator = coordinator
+    
+    def create_binary_sensors(self):
+        """Create all VCF binary sensor entities."""
+        return [
+            VCFConnectionBinarySensor(self.coordinator),
+            VCFUpdatesAvailableBinarySensor(self.coordinator)
+        ]
+
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up binary sensors for VCF system status."""
+    """Set up binary sensors for VCF system status using OOP approach."""
     try:
         # Get or create coordinator
         coordinator = hass.data.get(_DOMAIN, {}).get("coordinator")
@@ -19,11 +33,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             
         await coordinator.async_config_entry_first_refresh()
         
-        # Create binary sensors
-        entities = [
-            VCFConnectionBinarySensor(coordinator),
-            VCFUpdatesAvailableBinarySensor(coordinator)
-        ]
+        # Create binary sensors using manager
+        sensor_manager = VCFBinarySensorManager(coordinator)
+        entities = sensor_manager.create_binary_sensors()
         
         async_add_entities(entities, True)
     except Exception as e:
