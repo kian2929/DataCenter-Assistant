@@ -1,6 +1,4 @@
 import logging
-import asyncio
-import voluptuous as vol
 import time
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import EntityCategory
@@ -12,7 +10,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
-_DOMAIN = "datacenter_assistant"  # Lokale Variable anstatt Import
+_DOMAIN = "datacenter_assistant"
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up the button platform."""
@@ -30,6 +28,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(entities)
 
 
+async def _refresh_token_helper(hass: HomeAssistant, entry: ConfigEntry):
+    """Helper function to refresh VCF token."""
+    vcf_url = entry.data.get("vcf_url")
+    vcf_username = entry.data.get("vcf_username", "")
+    vcf_password = entry.data.get("vcf_password", "")
+    
+    if not all([vcf_url, vcf_username, vcf_password]):
+        _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
+        return False
+        
+    try:
+        session = async_get_clientsession(hass)
+        auth_data = {"username": vcf_username, "password": vcf_password}
+        
+        _LOGGER.info(f"Attempting to connect to {vcf_url}/v1/tokens")
+        
+        async with session.post(f"{vcf_url}/v1/tokens", json=auth_data, ssl=False) as resp:
+            if resp.status != 200:
+                _LOGGER.error(f"VCF token refresh failed: {resp.status}")
+                return False
+                
+            token_data = await resp.json()
+            new_token = token_data.get("accessToken") or token_data.get("access_token")
+            
+            if new_token:
+                new_data = dict(entry.data)
+                expiry = int(time.time()) + 3600
+                new_data.update({"vcf_token": new_token, "token_expiry": expiry})
+                
+                _LOGGER.info(f"New token will expire at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expiry))}")
+                hass.config_entries.async_update_entry(entry, data=new_data)
+                return True
+            else:
+                _LOGGER.warning("Could not extract token from response")
+                return False
+                
+    except Exception as e:
+        _LOGGER.error(f"Error refreshing VCF token: {e}")
+        return False
+
+
 class VCFRefreshTokenButton(ButtonEntity):
     """Button to refresh VCF token manually."""
     
@@ -37,7 +76,7 @@ class VCFRefreshTokenButton(ButtonEntity):
         self.hass = hass
         self.entry = entry
         self._attr_name = "VCF Refresh Token"
-        self._attr_unique_id = f"{entry.entry_id}_vcf_refresh_token"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_refresh_token_button"
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_icon = "mdi:refresh-circle"
     
@@ -45,58 +84,13 @@ class VCFRefreshTokenButton(ButtonEntity):
         """Handle button press to refresh token."""
         _LOGGER.info("Manually refreshing VCF token")
         
-        vcf_url = self.entry.data.get("vcf_url")
-        vcf_username = self.entry.data.get("vcf_username", "")
-        vcf_password = self.entry.data.get("vcf_password", "")
+        success = await _refresh_token_helper(self.hass, self.entry)
         
-        if not vcf_url or not vcf_username or not vcf_password:
-            _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
-            return
-            
-        try:
-            # Direkter API-Aufruf für Token-Erneuerung
-            session = async_get_clientsession(self.hass)
-            login_url = f"{vcf_url}/v1/tokens"
-            
-            auth_data = {
-                "username": vcf_username,
-                "password": vcf_password
-            }
-            
-            _LOGGER.info(f"Attempting to connect to {login_url}")
-            
-            async with session.post(login_url, json=auth_data, ssl=False) as resp:
-                if resp.status != 200:
-                    _LOGGER.error(f"VCF token refresh failed: {resp.status}")
-                    return
-                    
-                token_data = await resp.json()
-                new_token = token_data.get("accessToken") or token_data.get("access_token")
-                
-                if new_token:
-                    # Aktualisiere die Konfiguration mit neuem Token und Ablaufzeit
-                    new_data = dict(self.entry.data)
-                    new_data["vcf_token"] = new_token
-                    
-                    # Token-Ablaufzeit berechnen (1 Stunde ab jetzt)
-                    expiry = int(time.time()) + 3600  # 1 Stunde in Sekunden
-                    new_data["token_expiry"] = expiry
-                    _LOGGER.info(f"New token will expire at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expiry))}")
-                    
-                    self.hass.config_entries.async_update_entry(
-                        self.entry, 
-                        data=new_data
-                    )
-                    
-                    # Force update des Coordinators
-                    coordinator = self.hass.data.get(_DOMAIN, {}).get("coordinator")
-                    if coordinator:
-                        await coordinator.async_refresh()
-                else:
-                    _LOGGER.warning("Could not extract token from response")
-                    
-        except Exception as e:
-            _LOGGER.error(f"Error refreshing VCF token: {e}")
+        if success:
+            # Force update of coordinator
+            coordinator = self.hass.data.get(_DOMAIN, {}).get("coordinator")
+            if coordinator:
+                await coordinator.async_refresh()
 
 
 class VCFManualUpdateCheckButton(ButtonEntity, CoordinatorEntity):

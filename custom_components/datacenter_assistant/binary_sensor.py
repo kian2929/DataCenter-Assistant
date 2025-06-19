@@ -44,10 +44,9 @@ class VCFConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
     def is_on(self):
         """Return True if VCF is connected and domains are available."""
         try:
-            if self.coordinator.data is None:
+            if not self.coordinator.data:
                 return False
                 
-            # Check if we have domain data and no setup failed
             domains = self.coordinator.data.get("domains", [])
             setup_failed = self.coordinator.data.get("setup_failed", False)
             
@@ -71,8 +70,7 @@ class VCFConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
                 "setup_failed": setup_failed,
             }
             
-            # Only add error if there actually is one
-            coordinator_error = self.coordinator.data.get("error") if self.coordinator.data else None
+            coordinator_error = self.coordinator.data.get("error")
             if coordinator_error:
                 attributes["connection_error"] = coordinator_error
                 

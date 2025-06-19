@@ -1,50 +1,52 @@
-import asyncio
 import aiohttp
 import logging
 import time
 from datetime import timedelta
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
-
 _DOMAIN = "datacenter_assistant"
 
 def truncate_description(text, max_length=61):
     """Truncate description text to max_length characters + '...' if needed."""
     if not text or not isinstance(text, str):
         return text
-    if len(text) <= max_length:
-        return text
-    return text[:max_length] + "..."
+    return text[:max_length] if len(text) <= max_length else text[:max_length] + "..."
+
+def version_tuple(version_str):
+    """Convert version string to tuple for comparison."""
+    if not version_str:
+        return (0, 0, 0, 0)
+    parts = version_str.split('.')
+    while len(parts) < 4:
+        parts.append('0')
+    try:
+        return tuple(map(int, parts[:4]))
+    except ValueError:
+        _LOGGER.warning(f"Non-numeric version part in {version_str}")
+        return tuple(parts[:4])
 
 def get_coordinator(hass, config_entry):
     """Get the data update coordinator."""
     vcf_url = config_entry.data.get("vcf_url")
-    vcf_token = config_entry.data.get("vcf_token")
-    vcf_refresh_token = config_entry.data.get("vcf_refresh_token", "")
     vcf_username = config_entry.data.get("vcf_username", "")
     vcf_password = config_entry.data.get("vcf_password", "")
-    token_expiry = config_entry.data.get("token_expiry", 0)  # Default 0 für unbekannt
+    token_expiry = config_entry.data.get("token_expiry", 0)  # Default 0 for unknown
     
     _LOGGER.debug(f"Initializing VCF coordinator with URL: {vcf_url}")
 
     async def refresh_vcf_token():
         """Refresh VCF API token."""
-        if not vcf_url or not vcf_username or not vcf_password:
+        if not all([vcf_url, vcf_username, vcf_password]):
             _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
             return None
             
         try:
             session = async_get_clientsession(hass)
-            login_url = f"{vcf_url}/v1/tokens"
+            auth_data = {"username": vcf_username, "password": vcf_password}
             
-            auth_data = {
-                "username": vcf_username,
-                "password": vcf_password
-            }
-            
-            async with session.post(login_url, json=auth_data, ssl=False) as resp:
+            async with session.post(f"{vcf_url}/v1/tokens", json=auth_data, ssl=False) as resp:
                 if resp.status != 200:
                     _LOGGER.error(f"VCF token refresh failed: {resp.status}")
                     return None
@@ -53,22 +55,15 @@ def get_coordinator(hass, config_entry):
                 new_token = token_data.get("accessToken") or token_data.get("access_token")
                 
                 if new_token:
-                    # Aktualisiere die Konfiguration mit neuem Token und Ablaufzeit
                     new_data = dict(config_entry.data)
-                    new_data["vcf_token"] = new_token
+                    expiry = int(time.time()) + 3600
+                    new_data.update({"vcf_token": new_token, "token_expiry": expiry})
                     
-                    # Token-Ablaufzeit berechnen (1 Stunde ab jetzt)
-                    expiry = int(time.time()) + 3600  # 1 Stunde in Sekunden
-                    new_data["token_expiry"] = expiry
                     _LOGGER.info(f"New token will expire at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expiry))}")
-                    
-                    hass.config_entries.async_update_entry(
-                        config_entry, 
-                        data=new_data
-                    )
+                    hass.config_entries.async_update_entry(config_entry, data=new_data)
                     return new_token
                 else:
-                    _LOGGER.warning(f"Could not extract token from response")
+                    _LOGGER.warning("Could not extract token from response")
                     return None
         except Exception as e:
             _LOGGER.error(f"Error refreshing VCF token: {e}")
@@ -96,40 +91,34 @@ def get_coordinator(hass, config_entry):
                 _LOGGER.warning("Failed to refresh token proactively")
         
         session = async_get_clientsession(hass)
-        headers = {
-            "Authorization": f"Bearer {current_token}",
-            "Accept": "application/json"
-        }
+        headers = create_headers(current_token)
+        
+        # Helper function for API calls with token refresh
+        async def api_call_with_retry(url, params=None):
+            nonlocal current_token, headers
+            data, error = await make_api_call(session, url, headers, params=params)
+            if error and "401" in error:
+                _LOGGER.info("Token expired, refreshing...")
+                new_token = await refresh_vcf_token()
+                if new_token:
+                    current_token = new_token
+                    headers = create_headers(current_token)
+                    data, error = await make_api_call(session, url, headers, params=params)
+                else:
+                    raise aiohttp.ClientError("Failed to refresh token")
+            if error:
+                raise aiohttp.ClientError(error)
+            return data
         
         try:
             # Step 1: Get Domain Information - only consider ACTIVE domains
             _LOGGER.debug("Step 1: Getting domains (only ACTIVE)")
-            domains_url = f"{vcf_url}/v1/domains"
-            
-            async with session.get(domains_url, headers=headers, ssl=False) as resp:
-                if resp.status == 401:
-                    _LOGGER.info("Token expired, refreshing...")
-                    new_token = await refresh_vcf_token()
-                    if new_token:
-                        headers["Authorization"] = f"Bearer {new_token}"
-                        current_token = new_token
-                    else:
-                        raise aiohttp.ClientError("Failed to refresh token")
-                        
-                    # Retry with new token
-                    async with session.get(domains_url, headers=headers, ssl=False) as retry_resp:
-                        if retry_resp.status != 200:
-                            raise aiohttp.ClientError(f"Domains API failed: {retry_resp.status}")
-                        domains_data = await retry_resp.json()
-                elif resp.status != 200:
-                    raise aiohttp.ClientError(f"Domains API failed: {resp.status}")
-                else:
-                    domains_data = await resp.json()
+            domains_data = await api_call_with_retry(f"{vcf_url}/v1/domains")
             
             # Extract active domains with prefixed variables
             active_domains = []
             domain_counter = 1
-            domain_elements = domains_data.get("elements", [])
+            domain_elements = domains_data.get("elements", []) if domains_data else []
             
             for domain in domain_elements:
                 if domain.get("status") == "ACTIVE":
@@ -149,15 +138,8 @@ def get_coordinator(hass, config_entry):
             
             # Step 2: Get SDDC Manager Information
             _LOGGER.debug("Step 2: Getting SDDC managers to match with domains")
-            sddc_managers_url = f"{vcf_url}/v1/sddc-managers"
-            
-            async with session.get(sddc_managers_url, headers=headers, ssl=False) as resp:
-                if resp.status != 200:
-                    raise aiohttp.ClientError(f"SDDC Managers API failed: {resp.status}")
-                sddc_data = await resp.json()
-            
-            # Map SDDC managers to domains
-            sddc_elements = sddc_data.get("elements", [])
+            sddc_data, _ = await make_api_call(session, f"{vcf_url}/v1/sddc-managers", headers)
+            sddc_elements = sddc_data.get("elements", []) if sddc_data else []
             for domain in active_domains:
                 for sddc in sddc_elements:
                     if sddc.get("domain", {}).get("id") == domain["id"]:
@@ -178,48 +160,29 @@ def get_coordinator(hass, config_entry):
                 try:
                     # Get current VCF version for this domain
                     _LOGGER.debug(f"Getting current VCF version for domain {domain_name}")
-                    releases_url = f"{vcf_url}/v1/releases"
-                    params = {"domainId": domain_id}
-                    
-                    async with session.get(releases_url, headers=headers, params=params, ssl=False) as resp:
-                        if resp.status != 200:
-                            _LOGGER.warning(f"Failed to get releases for domain {domain_name}: {resp.status}")
-                            continue
-                        releases_data = await resp.json()
+                    releases_data = await api_call_with_retry(f"{vcf_url}/v1/releases", {"domainId": domain_id})
                     
                     current_version = None
-                    if releases_data.get("elements"):
+                    if releases_data and releases_data.get("elements"):
                         current_version = releases_data["elements"][0].get("version")
                     
                     if not current_version:
                         _LOGGER.warning(f"Could not determine current VCF version for domain {domain_name}")
-                        domain_updates[domain_id] = {
-                            "domain_name": domain_name,
-                            "domain_prefix": prefix,
-                            "current_version": None,
-                            "update_status": "error",
-                            "error": "Could not determine current VCF version",
-                            "next_release": None
-                        }
+                        domain_updates[domain_id] = create_domain_update_entry(
+                            domain_name, prefix, None, "error", "Could not determine current VCF version"
+                        )
                         continue
                     
                     # Get future releases for this domain
                     _LOGGER.debug(f"Getting future releases for domain {domain_name}")
-                    future_releases_url = f"{vcf_url}/v1/releases/domains/{domain_id}/future-releases"
+                    future_releases_data = await api_call_with_retry(f"{vcf_url}/v1/releases/domains/{domain_id}/future-releases")
                     
-                    async with session.get(future_releases_url, headers=headers, ssl=False) as resp:
-                        if resp.status != 200:
-                            _LOGGER.warning(f"Failed to get future releases for domain {domain_name}: {resp.status}")
-                            # If no future releases available, domain is up to date
-                            domain_updates[domain_id] = {
-                                "domain_name": domain_name,
-                                "domain_prefix": prefix,
-                                "current_version": current_version,
-                                "update_status": "up_to_date",
-                                "next_release": None
-                            }
-                            continue
-                        future_releases_data = await resp.json()
+                    if not future_releases_data:
+                        # If no future releases available, domain is up to date
+                        domain_updates[domain_id] = create_domain_update_entry(
+                            domain_name, prefix, current_version, "up_to_date"
+                        )
+                        continue
                     
                     # Filter and find the appropriate next release
                     next_release_info = None
@@ -250,15 +213,8 @@ def get_coordinator(hass, config_entry):
                             release_version and 
                             min_compatible_version):
                             
-                            # Compare versions (assuming they are in format x.y.z.w)
+                            # Compare versions using helper function
                             try:
-                                def version_tuple(v):
-                                    parts = v.split('.')
-                                    # Normalize to 4 parts
-                                    while len(parts) < 4:
-                                        parts.append('0')
-                                    return tuple(map(int, parts[:4]))
-                                
                                 current_tuple = version_tuple(current_version)
                                 release_tuple = version_tuple(release_version)
                                 min_compatible_tuple = version_tuple(min_compatible_version)
@@ -281,19 +237,8 @@ def get_coordinator(hass, config_entry):
                     if applicable_releases:
                         _LOGGER.debug(f"Found {len(applicable_releases)} applicable releases for domain {domain_name}")
                         
-                        # Sort by version to get the oldest (lowest version number)
-                        def version_tuple_for_sort(v):
-                            parts = v.split('.')
-                            while len(parts) < 4:
-                                parts.append('0')
-                            try:
-                                return tuple(map(int, parts[:4]))
-                            except ValueError:
-                                # Handle non-numeric version parts
-                                _LOGGER.warning(f"Non-numeric version part in {v}, using string comparison")
-                                return tuple(parts[:4])
-                        
-                        applicable_releases.sort(key=lambda x: version_tuple_for_sort(x.get("version", "0.0.0.0")))
+                        # Sort by version using helper function
+                        applicable_releases.sort(key=lambda x: version_tuple(x.get("version", "0.0.0.0")))
                         selected_release = applicable_releases[0]
                         
                         # Capture the whole JSON as domainX_nextRelease
@@ -394,7 +339,7 @@ def get_coordinator(hass, config_entry):
             # Extract active domains with prefixed variables
             active_domains = []
             domain_counter = 1
-            domain_elements = domains_data.get("elements", [])
+            domain_elements = domains_data.get("elements", []) if domains_data else []
             
             for domain in domain_elements:
                 if domain.get("status") == "ACTIVE":
@@ -552,24 +497,54 @@ def get_coordinator(hass, config_entry):
             _LOGGER.error(f"Error in VCF resource collection workflow: {e}")
             return {"domains": [], "domain_resources": {}, "error": str(e)}
 
-    coordinator = DataUpdateCoordinator(
+    def create_headers(token):
+        """Create standard headers for VCF API calls."""
+        return {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+    async def make_api_call(session, url, headers, method="GET", params=None):
+        """Make a VCF API call with error handling."""
+        try:
+            if method == "GET":
+                async with session.get(url, headers=headers, params=params, ssl=False) as resp:
+                    if resp.status == 200:
+                        return await resp.json(), None
+                    return None, f"API call failed: {resp.status}"
+            return None, "Unsupported method"
+        except Exception as e:
+            return None, f"API call error: {e}"
+
+    def create_domain_update_entry(domain_name, prefix, current_version, status, error=None, next_release=None):
+        """Create standardized domain update entry."""
+        return {
+            "domain_name": domain_name,
+            "domain_prefix": prefix,
+            "current_version": current_version,
+            "update_status": status,
+            "error": error,
+            "next_release": next_release
+        }
+
+    return DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name="VCF Upgrades",
+        name=_DOMAIN,
         update_method=async_fetch_upgrades,
-        update_interval=timedelta(minutes=15),
+        update_interval=timedelta(seconds=300),
     )
-    
-    # Create a new coordinator for resource monitoring
+
+    # Create a resource coordinator for resource monitoring  
     resource_coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name="VCF Resources",
+        name="VCF Resources", 
         update_method=async_fetch_resources,
-        update_interval=timedelta(seconds=10),  # Update every 10 seconds as requested
+        update_interval=timedelta(seconds=10),
     )
 
-    # Speichere beide Coordinator global für andere Komponenten
+    # Store both coordinators globally for other components
     hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     hass.data.setdefault(_DOMAIN, {})["resource_coordinator"] = resource_coordinator
     
@@ -578,7 +553,48 @@ def get_coordinator(hass, config_entry):
     
     return coordinator
 
+
 def get_resource_coordinator(hass, config_entry):
     """Get the resource data update coordinator."""
     # The resource coordinator is created and stored when get_coordinator is called
     return hass.data.get(_DOMAIN, {}).get("resource_coordinator")
+
+
+def is_release_applicable(release, current_version):
+    """Check if a release is applicable based on criteria."""
+    applicability_status = release.get("applicabilityStatus")
+    is_applicable = release.get("isApplicable", False)
+    release_version = release.get("version")
+    min_compatible_version = release.get("minCompatibleVcfVersion")
+    
+    if not (applicability_status == "APPLICABLE" and is_applicable and release_version and min_compatible_version):
+        return False
+    
+    try:
+        current_tuple = version_tuple(current_version)
+        release_tuple = version_tuple(release_version)
+        min_compatible_tuple = version_tuple(min_compatible_version)
+        return release_tuple > current_tuple >= min_compatible_tuple
+    except Exception as e:
+        _LOGGER.warning(f"Error comparing versions for release {release_version}: {e}")
+        return False
+
+
+def filter_applicable_releases(future_releases, current_version, domain_name):
+    """Filter and return applicable releases for a domain."""
+    applicable_releases = []
+    
+    for release in future_releases:
+        release_version = release.get("version")
+        _LOGGER.debug(f"Evaluating release {release_version}: "
+                     f"status={release.get('applicabilityStatus')}, "
+                     f"applicable={release.get('isApplicable', False)}, "
+                     f"minCompatible={release.get('minCompatibleVcfVersion')}")
+        
+        if is_release_applicable(release, current_version):
+            applicable_releases.append(release)
+            _LOGGER.debug(f"Release {release_version} is applicable for domain {domain_name}")
+        else:
+            _LOGGER.debug(f"Release {release_version} does not meet criteria")
+    
+    return applicable_releases

@@ -4,7 +4,7 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-# DOMAIN entfernen - wird aus __init__.py importiert
+# Import DOMAIN from __init__.py
 from . import DOMAIN
 
 class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -30,15 +30,13 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 return self.async_create_entry(title="DataCenter Assistant", data=user_input)
 
-        # Show the form with any errors
+        # Show the form with all required fields
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
                 vol.Required("vcf_url"): str,
                 vol.Required("vcf_username"): str,
                 vol.Required("vcf_password"): str,
-                vol.Optional("vcf_token", default=""): str,
-                vol.Optional("vcf_refresh_token", default=""): str,
             }),
             errors=errors
         )

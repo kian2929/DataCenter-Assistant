@@ -5,23 +5,18 @@ from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import aiohttp
 from aiohttp import ClientError
-import asyncio
 from .coordinator import get_coordinator, get_resource_coordinator
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
-
-# DOMAIN-Definition entfernen und stattdessen hier eine lokale Variable verwenden
 _DOMAIN = "datacenter_assistant"
 
 def truncate_description(text, max_length=61):
     """Truncate description text to max_length characters + '...' if needed."""
     if not text or not isinstance(text, str):
         return text
-    if len(text) <= max_length:
-        return text
-    return text[:max_length] + "..."
+    return text[:max_length] if len(text) <= max_length else text[:max_length] + "..."
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
