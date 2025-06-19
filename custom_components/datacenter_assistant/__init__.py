@@ -41,7 +41,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         # Remove services
-        services_to_remove = ["refresh_token", "trigger_upgrade", "download_bundle"]
+        services_to_remove = ["refresh_token", "trigger_upgrade", "download_bundle", "start_domain_upgrade", "acknowledge_upgrade_alerts"]
         for service in services_to_remove:
             hass.services.async_remove(DOMAIN, service)
         
@@ -191,7 +191,72 @@ async def _async_setup_services(hass: HomeAssistant, entry: ConfigEntry):
         except Exception as e:
             _LOGGER.error(f"Error downloading VCF bundle: {e}")
     
+    async def start_domain_upgrade_service(call: ServiceCall):
+        """Service to start VCF domain upgrade."""
+        _LOGGER.info("Service: Starting VCF domain upgrade")
+        
+        domain_id = call.data.get("domain_id")
+        
+        if not domain_id:
+            _LOGGER.error("Domain ID is required for upgrade")
+            return
+        
+        try:
+            # Get upgrade service from hass data
+            upgrade_service = hass.data.get(DOMAIN, {}).get("upgrade_service")
+            if not upgrade_service:
+                _LOGGER.error("Upgrade service not available")
+                return
+            
+            # Get coordinator data for domain information
+            coordinator = hass.data.get(DOMAIN, {}).get("coordinator")
+            if not coordinator or not coordinator.data:
+                _LOGGER.error("Coordinator data not available")
+                return
+            
+            domain_data = coordinator.data.get("domain_updates", {}).get(domain_id, {})
+            if not domain_data:
+                _LOGGER.error(f"Domain {domain_id} not found")
+                return
+            
+            success = await upgrade_service.start_upgrade(domain_id, domain_data)
+            if success:
+                _LOGGER.info(f"Domain upgrade started successfully for {domain_id}")
+            else:
+                _LOGGER.warning(f"Domain upgrade could not be started for {domain_id}")
+                
+        except Exception as e:
+            _LOGGER.error(f"Error starting domain upgrade: {e}")
+    
+    async def acknowledge_upgrade_alerts_service(call: ServiceCall):
+        """Service to acknowledge upgrade alerts."""
+        _LOGGER.info("Service: Acknowledging upgrade alerts")
+        
+        domain_id = call.data.get("domain_id")
+        
+        if not domain_id:
+            _LOGGER.error("Domain ID is required for acknowledging alerts")
+            return
+        
+        try:
+            # Get upgrade service from hass data
+            upgrade_service = hass.data.get(DOMAIN, {}).get("upgrade_service")
+            if not upgrade_service:
+                _LOGGER.error("Upgrade service not available")
+                return
+            
+            success = await upgrade_service.acknowledge_alerts(domain_id)
+            if success:
+                _LOGGER.info(f"Alerts acknowledged successfully for domain {domain_id}")
+            else:
+                _LOGGER.warning(f"No alerts to acknowledge for domain {domain_id}")
+                
+        except Exception as e:
+            _LOGGER.error(f"Error acknowledging alerts: {e}")
+    
     # Register services
     hass.services.async_register(DOMAIN, "refresh_token", refresh_token_service)
     hass.services.async_register(DOMAIN, "trigger_upgrade", trigger_upgrade_service)
     hass.services.async_register(DOMAIN, "download_bundle", download_bundle_service)
+    hass.services.async_register(DOMAIN, "start_domain_upgrade", start_domain_upgrade_service)
+    hass.services.async_register(DOMAIN, "acknowledge_upgrade_alerts", acknowledge_upgrade_alerts_service)

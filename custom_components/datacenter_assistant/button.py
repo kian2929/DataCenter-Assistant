@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import get_coordinator
 from .vcf_api import VCFAPIClient
+from .upgrade_service import VCFUpgradeService
 
 _LOGGER = logging.getLogger(__name__)
 _DOMAIN = "datacenter_assistant"
@@ -22,13 +23,10 @@ class VCFButtonManager:
         self.hass = hass
         self.entry = entry
         self.vcf_client = VCFAPIClient(hass, entry)
-    
-    def create_buttons(self, coordinator):
-        """Create all VCF button entities."""
-        return [
-            VCFRefreshTokenButton(self.hass, self.entry, self.vcf_client),
-            VCFManualUpdateCheckButton(self.hass, self.entry, coordinator)
-        ]
+        self.upgrade_service = VCFUpgradeService(hass, entry, self.vcf_client)
+        
+        # Store upgrade service in hass data for access by other components
+        hass.data.setdefault(_DOMAIN, {})["upgrade_service"] = self.upgrade_service
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -40,9 +38,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     
     button_manager = VCFButtonManager(hass, entry)
-    entities = button_manager.create_buttons(coordinator)
     
-    async_add_entities(entities)
+    # Create initial static buttons
+    static_buttons = [
+        VCFRefreshTokenButton(hass, entry, button_manager.vcf_client),
+        VCFManualUpdateCheckButton(hass, entry, coordinator)
+    ]
+    
+    async_add_entities(static_buttons)
+    
+    # Store button manager and async_add_entities for dynamic button creation
+    hass.data.setdefault(_DOMAIN, {})["button_manager"] = button_manager
+    hass.data.setdefault(_DOMAIN, {})["button_async_add_entities"] = async_add_entities
+    
+    # Set up dynamic button creation when coordinator data changes
+    existing_domain_buttons = set()
+    
+    async def create_domain_buttons():
+        """Create domain-specific buttons dynamically."""
+        if coordinator.data and coordinator.data.get("domain_updates"):
+            new_buttons = []
+            for domain_id, domain_data in coordinator.data["domain_updates"].items():
+                if domain_id not in existing_domain_buttons:
+                    domain_name = domain_data.get("domain_name", "Unknown")
+                    domain_prefix = domain_data.get("domain_prefix", f"domain{len(existing_domain_buttons) + 1}")
+                    
+                    new_buttons.extend([
+                        VCFDomainUpgradeButton(hass, entry, coordinator, button_manager.upgrade_service, 
+                                             domain_id, domain_name, domain_prefix),
+                        VCFDomainAcknowledgeButton(hass, entry, coordinator, button_manager.upgrade_service, 
+                                                 domain_id, domain_name, domain_prefix)
+                    ])
+                    existing_domain_buttons.add(domain_id)
+            
+            if new_buttons:
+                _LOGGER.info(f"Adding {len(new_buttons)} domain buttons")
+                async_add_entities(new_buttons, True)
+    
+    # Add listener for coordinator updates
+    def coordinator_update_callback():
+        hass.async_create_task(create_domain_buttons())
+    
+    coordinator.async_add_listener(coordinator_update_callback)
+    
+    # Schedule initial button creation
+    hass.loop.call_later(2.0, lambda: hass.async_create_task(create_domain_buttons()))
 
 
 class VCFRefreshTokenButton(ButtonEntity):
@@ -100,4 +140,69 @@ class VCFManualUpdateCheckButton(ButtonEntity, CoordinatorEntity):
             _LOGGER.info("VCF update check process completed successfully")
         except Exception as e:
             _LOGGER.error(f"Error during manual VCF update check: {e}")
+
+
+class VCFDomainUpgradeButton(ButtonEntity, CoordinatorEntity):
+    """Button to start VCF upgrade for a specific domain."""
+    
+    def __init__(self, hass, entry, coordinator, upgrade_service, domain_id, domain_name, domain_prefix):
+        super().__init__(coordinator)
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self.upgrade_service = upgrade_service
+        self.domain_id = domain_id
+        self.domain_name = domain_name
+        self.domain_prefix = domain_prefix
+        self._attr_name = f"VCF {domain_name} Start Upgrade"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_{domain_prefix}_start_upgrade"
+        self._attr_icon = "mdi:rocket-launch"
+    
+    async def async_press(self) -> None:
+        """Handle button press to start VCF upgrade."""
+        _LOGGER.info(f"Starting VCF upgrade for domain {self.domain_name}")
+        
+        try:
+            domain_data = self.coordinator.data.get("domain_updates", {}).get(self.domain_id, {})
+            success = await self.upgrade_service.start_upgrade(self.domain_id, domain_data)
+            
+            if success:
+                _LOGGER.info(f"VCF upgrade started successfully for domain {self.domain_name}")
+            else:
+                _LOGGER.warning(f"VCF upgrade could not be started for domain {self.domain_name}")
+                
+        except Exception as e:
+            _LOGGER.error(f"Error starting VCF upgrade for domain {self.domain_name}: {e}")
+
+
+class VCFDomainAcknowledgeButton(ButtonEntity, CoordinatorEntity):
+    """Button to acknowledge alerts during VCF upgrade."""
+    
+    def __init__(self, hass, entry, coordinator, upgrade_service, domain_id, domain_name, domain_prefix):
+        super().__init__(coordinator)
+        self.hass = hass
+        self.entry = entry
+        self.coordinator = coordinator
+        self.upgrade_service = upgrade_service
+        self.domain_id = domain_id
+        self.domain_name = domain_name
+        self.domain_prefix = domain_prefix
+        self._attr_name = f"VCF {domain_name} Acknowledge Alerts"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_{domain_prefix}_acknowledge_alerts"
+        self._attr_icon = "mdi:check-circle"
+    
+    async def async_press(self) -> None:
+        """Handle button press to acknowledge alerts."""
+        _LOGGER.info(f"Acknowledging alerts for domain {self.domain_name}")
+        
+        try:
+            success = await self.upgrade_service.acknowledge_alerts(self.domain_id)
+            
+            if success:
+                _LOGGER.info(f"Alerts acknowledged successfully for domain {self.domain_name}")
+            else:
+                _LOGGER.warning(f"No alerts to acknowledge for domain {self.domain_name}")
+                
+        except Exception as e:
+            _LOGGER.error(f"Error acknowledging alerts for domain {self.domain_name}: {e}")
 

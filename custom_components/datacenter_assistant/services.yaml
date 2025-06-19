@@ -27,3 +27,25 @@ download_bundle:
       description: The ID of the bundle to download.
       selector:
         text:
+
+start_domain_upgrade:
+  name: Start Domain Upgrade
+  description: Starts the complete VCF upgrade process for a domain.
+  fields:
+    domain_id:
+      name: Domain ID
+      description: The ID of the domain to upgrade.
+      required: true
+      selector:
+        text:
+
+acknowledge_upgrade_alerts:
+  name: Acknowledge Upgrade Alerts
+  description: Acknowledges alerts during the upgrade process to continue.
+  fields:
+    domain_id:
+      name: Domain ID
+      description: The ID of the domain with alerts to acknowledge.
+      required: true
+      selector:
+        text:

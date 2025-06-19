@@ -13,7 +13,9 @@ class VCFEntityFactory:
     def create_domain_sensors(coordinator, domain_id, domain_name, domain_prefix):
         """Create all sensors for a domain."""
         return [
-            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix)
+            VCFDomainUpdateStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
+            VCFDomainUpgradeStatusSensor(coordinator, domain_id, domain_name, domain_prefix),
+            VCFDomainUpgradeLogsSensor(coordinator, domain_id, domain_name, domain_prefix)
         ]
     
     @staticmethod
@@ -270,3 +272,166 @@ class VCFHostResourceSensor(VCFHostResourceBaseSensor):
     
     def __init__(self, coordinator, domain_id, domain_name, domain_prefix, host_id, hostname, resource_type):
         super().__init__(coordinator, domain_id, domain_name, domain_prefix, host_id, hostname, resource_type)
+
+
+class VCFDomainUpgradeStatusSensor(VCFDomainBaseSensor):
+    """Sensor for individual domain upgrade status."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix):
+        super().__init__(coordinator, domain_id, domain_name, domain_prefix, "Upgrade Status")
+        
+        # Listen for upgrade status change events
+        self._remove_listener = None
+        
+    async def async_added_to_hass(self):
+        """Run when sensor is added to Home Assistant."""
+        await super().async_added_to_hass()
+        
+        # Listen for VCF upgrade status change events
+        self._remove_listener = self.hass.bus.async_listen(
+            "vcf_upgrade_status_changed",
+            self._handle_upgrade_status_change
+        )
+    
+    async def async_will_remove_from_hass(self):
+        """Run when sensor is removed from Home Assistant."""
+        if self._remove_listener:
+            self._remove_listener()
+    
+    def _handle_upgrade_status_change(self, event):
+        """Handle upgrade status change events."""
+        if event.data.get("domain_id") == self._domain_id:
+            self.async_schedule_update_ha_state()
+    
+    @property
+    def state(self):
+        """Return the upgrade status of this domain."""
+        try:
+            # Get upgrade service from hass data
+            upgrade_service = self.hass.data.get("datacenter_assistant", {}).get("upgrade_service")
+            if upgrade_service:
+                return upgrade_service.get_upgrade_status(self._domain_id)
+            return "waiting_for_initiation"
+        except Exception as e:
+            _LOGGER.error(f"Error getting upgrade status for domain {self._domain_name}: {e}")
+            return "waiting_for_initiation"
+    
+    @property
+    def icon(self):
+        state = self.state
+        icons = {
+            "waiting_for_initiation": "mdi:clock-outline",
+            "targeting_new_vcf_version": "mdi:target",
+            "downloading_bundles": "mdi:download",
+            "running_prechecks": "mdi:check-circle-outline",
+            "waiting_acknowledgement": "mdi:alert-circle-check",
+            "starting_upgrades": "mdi:rocket-launch-outline",
+            "upgrading_sddcmanager": "mdi:server-network",
+            "upgrading_nsx": "mdi:network",
+            "upgrading_vcenter": "mdi:server",
+            "upgrading_esx_cluster": "mdi:server-network",
+            "final_validation": "mdi:check-decagram",
+            "successfully_completed": "mdi:check-circle",
+            "failed": "mdi:alert-circle"
+        }
+        return icons.get(state, "mdi:sync-alert")
+    
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        try:
+            attributes = {
+                "domain_name": self._domain_name,
+                "domain_prefix": self._domain_prefix,
+                "upgrade_status": self.state
+            }
+            
+            # Add domain update information for context
+            domain_data = self.get_domain_data()
+            if domain_data:
+                attributes.update({
+                    "current_version": domain_data.get("current_version"),
+                    "update_available": domain_data.get("update_status") == "updates_available"
+                })
+                
+                next_release = domain_data.get("next_release")
+                if next_release:
+                    attributes["target_version"] = next_release.get("version")
+            
+            return attributes
+        except Exception as e:
+            _LOGGER.error(f"Error getting upgrade status attributes for {self._domain_name}: {e}")
+            return {"error": str(e)}
+
+
+class VCFDomainUpgradeLogsSensor(VCFDomainBaseSensor):
+    """Sensor for individual domain upgrade logs."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix):
+        super().__init__(coordinator, domain_id, domain_name, domain_prefix, "Upgrade Logs")
+        
+        # Listen for upgrade logs change events
+        self._remove_listener = None
+        
+    async def async_added_to_hass(self):
+        """Run when sensor is added to Home Assistant."""
+        await super().async_added_to_hass()
+        
+        # Listen for VCF upgrade logs change events
+        self._remove_listener = self.hass.bus.async_listen(
+            "vcf_upgrade_logs_changed",
+            self._handle_upgrade_logs_change
+        )
+    
+    async def async_will_remove_from_hass(self):
+        """Run when sensor is removed from Home Assistant."""
+        if self._remove_listener:
+            self._remove_listener()
+    
+    def _handle_upgrade_logs_change(self, event):
+        """Handle upgrade logs change events."""
+        if event.data.get("domain_id") == self._domain_id:
+            self.async_schedule_update_ha_state()
+    
+    @property
+    def state(self):
+        """Return the upgrade logs of this domain."""
+        try:
+            # Get upgrade service from hass data
+            upgrade_service = self.hass.data.get("datacenter_assistant", {}).get("upgrade_service")
+            if upgrade_service:
+                logs = upgrade_service.get_upgrade_logs(self._domain_id)
+                # Return first 255 characters for state (Home Assistant limitation)
+                return logs[:255] if len(logs) > 255 else logs
+            return "No Messages"
+        except Exception as e:
+            _LOGGER.error(f"Error getting upgrade logs for domain {self._domain_name}: {e}")
+            return "No Messages"
+    
+    @property
+    def icon(self):
+        return "mdi:text-box-multiple"
+    
+    @property
+    def extra_state_attributes(self):
+        """Return full logs in attributes."""
+        try:
+            attributes = {
+                "domain_name": self._domain_name,
+                "domain_prefix": self._domain_prefix
+            }
+            
+            # Get full logs for markdown display
+            upgrade_service = self.hass.data.get("datacenter_assistant", {}).get("upgrade_service")
+            if upgrade_service:
+                full_logs = upgrade_service.get_upgrade_logs(self._domain_id)
+                attributes["full_logs"] = full_logs
+                attributes["markdown"] = full_logs  # For dashboard card display
+            else:
+                attributes["full_logs"] = "No Messages"
+                attributes["markdown"] = "No Messages"
+            
+            return attributes
+        except Exception as e:
+            _LOGGER.error(f"Error getting upgrade logs attributes for {self._domain_name}: {e}")
+            return {"error": str(e)}
