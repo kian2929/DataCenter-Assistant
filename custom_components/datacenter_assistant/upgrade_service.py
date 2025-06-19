@@ -197,14 +197,48 @@ class VCFUpgradeService:
             total_bundles = len(patch_bundles)
             downloaded = 0
             
+            _LOGGER.debug(f"Domain {domain_id}: Found {total_bundles} bundles to process")
+            
             for bundle in patch_bundles:
                 bundle_id = bundle.get("bundleId")
                 if not bundle_id:
                     continue
                 
-                # Start download
-                download_data = {"downloadNow": True}
-                await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}", method="PATCH", data=download_data)
+                # Check if bundle is already downloaded
+                _LOGGER.debug(f"Domain {domain_id}: Checking download status for bundle {bundle_id}")
+                bundle_status = await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}")
+                current_download_status = bundle_status.get("downloadStatus")
+                _LOGGER.debug(f"Domain {domain_id}: Bundle {bundle_id} download status: {current_download_status}")
+                
+                if current_download_status == "SUCCESSFUL":
+                    # Bundle already downloaded, skip
+                    _LOGGER.info(f"Domain {domain_id}: Bundle {bundle_id} already downloaded, skipping")
+                    downloaded += 1
+                    self.set_upgrade_logs(domain_id, 
+                        f"**Downloading Bundles**\n\nProgress: {downloaded}/{total_bundles} bundles downloaded... (bundle {bundle_id} already downloaded)")
+                    continue
+                
+                # Start download with correct data structure
+                _LOGGER.debug(f"Domain {domain_id}: Starting download for bundle {bundle_id}")
+                download_data = {
+                    "bundleDownloadSpec": {
+                        "downloadNow": True
+                    }
+                }
+                
+                try:
+                    await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}", method="PATCH", data=download_data)
+                except Exception as e:
+                    # If bundle is already downloaded or download request fails, check status
+                    bundle_status = await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}")
+                    current_download_status = bundle_status.get("downloadStatus")
+                    if current_download_status == "SUCCESSFUL":
+                        downloaded += 1
+                        self.set_upgrade_logs(domain_id, 
+                            f"**Downloading Bundles**\n\nProgress: {downloaded}/{total_bundles} bundles downloaded... (bundle {bundle_id} was already downloaded)")
+                        continue
+                    else:
+                        raise Exception(f"Failed to start download for bundle {bundle_id}: {e}")
                 
                 # Wait for download completion
                 while True:
