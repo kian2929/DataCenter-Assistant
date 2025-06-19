@@ -139,16 +139,20 @@ class VCFUpgradeService:
             await self._run_prechecks(domain_id, target_version, next_release)
             
             # Step 4: Start upgrades
+            _LOGGER.info(f"Domain {domain_id}: Starting component upgrades phase")
             await self._start_upgrades(domain_id, target_version, domain_data)
             
             # Step 5: Final validation
+            _LOGGER.info(f"Domain {domain_id}: Starting final validation phase")
             await self._final_validation(domain_id, target_version)
             
             # Success
+            _LOGGER.info(f"Domain {domain_id}: Upgrade workflow completed successfully!")
             self.set_upgrade_status(domain_id, "successfully_completed")
             self.set_upgrade_logs(domain_id, "**Upgrade Completed Successfully**\n\nVCF upgrade completed successfully!")
             
             # Reset to waiting state after a delay
+            _LOGGER.info(f"Domain {domain_id}: Resetting upgrade status to waiting after 10 seconds")
             await asyncio.sleep(10)
             self.set_upgrade_status(domain_id, "waiting_for_initiation")
             self.set_upgrade_logs(domain_id, "No Messages")
@@ -449,74 +453,156 @@ Waiting for acknowledgement..."""
         self.set_upgrade_logs(domain_id, "**Starting Component Upgrades**\n\nStarting component upgrades...")
         
         try:
+            upgrade_cycle = 0
             while True:
+                upgrade_cycle += 1
+                _LOGGER.info(f"Domain {domain_id}: Starting upgrade cycle {upgrade_cycle}")
+                
                 # Get what can be upgraded next
+                _LOGGER.debug(f"Domain {domain_id}: Fetching available upgrades for target version {target_version}")
                 upgradables_response = await self.vcf_client.api_request(
                     f"/v1/upgradables/domains/{domain_id}",
                     params={"targetVersion": target_version}
                 )
                 
+                _LOGGER.debug(f"Domain {domain_id}: Upgradables response: {upgradables_response}")
+                
                 if not isinstance(upgradables_response, dict):
                     raise Exception("Unexpected response format from upgradables endpoint")
+
+                all_elements = upgradables_response.get("elements", [])
+                _LOGGER.info(f"Domain {domain_id}: Found {len(all_elements)} total upgradable elements")
                 
                 available_upgrades = [
-                    upgrade for upgrade in upgradables_response.get("elements", [])
+                    upgrade for upgrade in all_elements
                     if isinstance(upgrade, dict) and upgrade.get("status") == "AVAILABLE"
                 ]
                 
+                _LOGGER.info(f"Domain {domain_id}: Found {len(available_upgrades)} available upgrades")
+                
                 if not available_upgrades:
-                    _LOGGER.info(f"No more upgrades available for domain {domain_id}")
-                    break
+                    _LOGGER.info(f"Domain {domain_id}: No more upgrades available, checking if all are completed")
+                    
+                    # Check if all elements are completed
+                    completed_elements = [
+                        element for element in all_elements
+                        if isinstance(element, dict) and element.get("status") == "COMPLETED"
+                    ]
+                    
+                    _LOGGER.info(f"Domain {domain_id}: Found {len(completed_elements)} completed elements out of {len(all_elements)} total")
+                    
+                    if len(completed_elements) == len(all_elements):
+                        _LOGGER.info(f"Domain {domain_id}: All upgrades completed successfully")
+                        break
+                    else:
+                        # Log status of non-completed elements
+                        for element in all_elements:
+                            if isinstance(element, dict) and element.get("status") != "COMPLETED":
+                                _LOGGER.info(f"Domain {domain_id}: Element {element.get('bundleId', 'unknown')} status: {element.get('status', 'unknown')}")
+                        
+                        # Wait before checking again
+                        _LOGGER.info(f"Domain {domain_id}: Waiting 30 seconds before checking upgrades again...")
+                        await asyncio.sleep(30)
+                        continue
                 
                 # Process each available upgrade
-                for upgrade in available_upgrades:
+                processed_count = 0
+                for i, upgrade in enumerate(available_upgrades, 1):
+                    _LOGGER.info(f"Domain {domain_id}: Processing upgrade {i}/{len(available_upgrades)}")
+                    
                     if not isinstance(upgrade, dict):
+                        _LOGGER.warning(f"Domain {domain_id}: Skipping non-dict upgrade: {upgrade}")
                         continue
                         
                     bundle_id = upgrade.get("bundleId")
+                    upgrade_status = upgrade.get("status")
+                    
+                    _LOGGER.debug(f"Domain {domain_id}: Upgrade details - bundleId: {bundle_id}, status: {upgrade_status}")
+                    
                     if not bundle_id:
+                        _LOGGER.warning(f"Domain {domain_id}: Skipping upgrade with no bundleId: {upgrade}")
                         continue
                     
                     # Get bundle details to determine component type
-                    bundle_response = await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}")
+                    _LOGGER.debug(f"Domain {domain_id}: Fetching bundle details for {bundle_id}")
+                    try:
+                        bundle_response = await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}")
+                    except Exception as e:
+                        _LOGGER.error(f"Domain {domain_id}: Failed to fetch bundle {bundle_id}: {e}")
+                        continue
+                    
+                    _LOGGER.debug(f"Domain {domain_id}: Bundle {bundle_id} response: {bundle_response}")
                     
                     if not isinstance(bundle_response, dict):
+                        _LOGGER.warning(f"Domain {domain_id}: Unexpected bundle response format for {bundle_id}: {bundle_response}")
                         continue
                         
                     components = bundle_response.get("components", [])
+                    _LOGGER.debug(f"Domain {domain_id}: Bundle {bundle_id} has {len(components)} components")
                     
                     if not components or not isinstance(components, list):
+                        _LOGGER.warning(f"Domain {domain_id}: Bundle {bundle_id} has no valid components: {components}")
                         continue
                     
                     component_data = components[0]
                     if not isinstance(component_data, dict):
+                        _LOGGER.warning(f"Domain {domain_id}: Bundle {bundle_id} first component is not a dict: {component_data}")
                         continue
                         
                     component_type = component_data.get("type", "")
+                    component_name = component_data.get("name", "unknown")
+                    component_version = component_data.get("version", "unknown")
+                    
+                    _LOGGER.info(f"Domain {domain_id}: Processing component - Type: {component_type}, Name: {component_name}, Version: {component_version}")
                     
                     # Execute upgrade based on component type
-                    if "SDDC_MANAGER" in component_type:
-                        await self._upgrade_sddc_manager(domain_id, bundle_id)
-                    elif "NSX_T_MANAGER" in component_type:
-                        await self._upgrade_nsx(domain_id, bundle_id)
-                    elif "VCENTER" in component_type:
-                        await self._upgrade_vcenter(domain_id, bundle_id)
-                    elif "ESX_HOST" in component_type:
-                        # Skip ESX host upgrades as per requirements
-                        _LOGGER.info(f"Skipping ESX host upgrade for domain {domain_id} (not implemented)")
-                        continue
-                    else:
-                        _LOGGER.warning(f"Unknown component type: {component_type}")
+                    try:
+                        if "SDDC_MANAGER" in component_type:
+                            _LOGGER.info(f"Domain {domain_id}: Starting SDDC Manager upgrade with bundle {bundle_id}")
+                            await self._upgrade_sddc_manager(domain_id, bundle_id)
+                            processed_count += 1
+                        elif "NSX_T_MANAGER" in component_type:
+                            _LOGGER.info(f"Domain {domain_id}: Starting NSX-T Manager upgrade with bundle {bundle_id}")
+                            await self._upgrade_nsx(domain_id, bundle_id)
+                            processed_count += 1
+                        elif "VCENTER" in component_type:
+                            _LOGGER.info(f"Domain {domain_id}: Starting vCenter upgrade with bundle {bundle_id}")
+                            await self._upgrade_vcenter(domain_id, bundle_id)
+                            processed_count += 1
+                        elif "ESX_HOST" in component_type or "HOST" in component_type:
+                            # Skip ESX host upgrades as per requirements but log properly
+                            _LOGGER.info(f"Domain {domain_id}: Skipping ESX host upgrade for component {component_name} (HOST upgrades not implemented)")
+                            # Mark as processed so we don't loop indefinitely
+                            processed_count += 1
+                            continue
+                        else:
+                            _LOGGER.warning(f"Domain {domain_id}: Unknown component type: {component_type} for component {component_name}")
+                            # For unknown types, still count as processed to avoid infinite loops
+                            processed_count += 1
+                            continue
+                            
+                    except Exception as e:
+                        _LOGGER.error(f"Domain {domain_id}: Failed to upgrade component {component_name} ({component_type}): {e}")
+                        # Continue with other upgrades even if one fails
                         continue
                     
-                    # Wait a bit before checking for next upgrades
+                    # Wait a bit before processing next upgrade
+                    _LOGGER.debug(f"Domain {domain_id}: Waiting 10 seconds before next upgrade...")
                     await asyncio.sleep(10)
+                
+                _LOGGER.info(f"Domain {domain_id}: Completed upgrade cycle {upgrade_cycle}, processed {processed_count} upgrades")
+                
+                # If we didn't process any upgrades in this cycle, wait longer before checking again
+                if processed_count == 0:
+                    _LOGGER.info(f"Domain {domain_id}: No upgrades processed this cycle, waiting 60 seconds...")
+                    await asyncio.sleep(60)
         
         except Exception as e:
             raise Exception(f"Component upgrades failed: {e}")
     
     async def _upgrade_sddc_manager(self, domain_id: str, bundle_id: str):
         """Upgrade SDDC Manager."""
+        _LOGGER.info(f"Domain {domain_id}: Starting SDDC Manager upgrade with bundle {bundle_id}")
         self.set_upgrade_status(domain_id, "upgrading_sddcmanager")
         self.set_upgrade_logs(domain_id, "**Upgrading SDDC Manager**\n\nUpgrading SDDC Manager. This may take up to 1 hour...")
         
@@ -530,36 +616,55 @@ Waiting for acknowledgement..."""
                 }]
             }
             
+            _LOGGER.debug(f"Domain {domain_id}: Sending SDDC Manager upgrade request with data: {upgrade_data}")
             upgrade_response = await self.vcf_client.api_request("/v1/upgrades", method="POST", data=upgrade_data)
+            _LOGGER.debug(f"Domain {domain_id}: SDDC Manager upgrade response: {upgrade_response}")
+            
             upgrade_id = upgrade_response.get("id")
             
             if not upgrade_id:
-                raise Exception("No upgrade ID returned")
+                raise Exception(f"No upgrade ID returned from SDDC Manager upgrade response: {upgrade_response}")
+            
+            _LOGGER.info(f"Domain {domain_id}: SDDC Manager upgrade started with ID: {upgrade_id}")
             
             # Monitor upgrade progress
+            check_count = 0
             while True:
+                check_count += 1
+                _LOGGER.debug(f"Domain {domain_id}: SDDC Manager upgrade status check #{check_count}")
+                
                 try:
                     status_response = await self.vcf_client.api_request(f"/v1/upgrades/{upgrade_id}")
                     status = status_response.get("status")
                     
+                    _LOGGER.info(f"Domain {domain_id}: SDDC Manager upgrade status: {status}")
+                    
                     if status == "COMPLETED_WITH_SUCCESS":
+                        _LOGGER.info(f"Domain {domain_id}: SDDC Manager upgrade completed successfully")
                         break
                     elif status in ["FAILED", "COMPLETED_WITH_FAILURE"]:
-                        raise Exception(f"SDDC Manager upgrade failed with status: {status}")
+                        error_msg = f"SDDC Manager upgrade failed with status: {status}"
+                        _LOGGER.error(f"Domain {domain_id}: {error_msg}")
+                        raise Exception(error_msg)
                     
                 except Exception as api_error:
                     # During SDDC Manager upgrade, API might be unavailable
-                    _LOGGER.info("API temporarily unavailable during SDDC Manager upgrade")
+                    _LOGGER.warning(f"Domain {domain_id}: API temporarily unavailable during SDDC Manager upgrade: {api_error}")
                     
                     # Try to check if API is back online
                     try:
+                        _LOGGER.debug(f"Domain {domain_id}: Testing if API is back online...")
                         await self.vcf_client.api_request("/v1/domains")
+                        _LOGGER.info(f"Domain {domain_id}: API is back online after SDDC Manager upgrade")
                         # If successful, wait additional 5 minutes
+                        _LOGGER.info(f"Domain {domain_id}: Waiting 5 minutes for SDDC Manager to fully stabilize...")
                         await asyncio.sleep(300)
                         break
-                    except:
+                    except Exception as test_error:
+                        _LOGGER.debug(f"Domain {domain_id}: API still not available: {test_error}")
                         pass
                 
+                _LOGGER.debug(f"Domain {domain_id}: Waiting 30 seconds before next SDDC Manager upgrade status check...")
                 await asyncio.sleep(30)
             
             _LOGGER.info(f"SDDC Manager upgrade completed for domain {domain_id}")
