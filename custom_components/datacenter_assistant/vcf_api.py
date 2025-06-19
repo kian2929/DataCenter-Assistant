@@ -99,15 +99,34 @@ class VCFAPIClient:
                     async with getattr(session, method.lower())(
                         url, headers=headers, json=data, params=params, ssl=False
                     ) as retry_resp:
-                        if retry_resp.status != 200:
+                        if retry_resp.status not in [200, 202, 204]:
+                            error_text = await retry_resp.text()
+                            _LOGGER.error(f"API request failed after token refresh: {retry_resp.status} - {error_text}")
                             raise aiohttp.ClientError(f"API request failed: {retry_resp.status}")
-                        return await retry_resp.json()
+                        
+                        # Try to parse as JSON, but handle empty responses for PATCH/PUT/DELETE
+                        try:
+                            return await retry_resp.json()
+                        except aiohttp.ContentTypeError:
+                            if method.upper() in ['PATCH', 'PUT', 'DELETE'] and retry_resp.status in [200, 202, 204]:
+                                return {"status": "success", "message": f"Operation completed with status {retry_resp.status}"}
+                            else:
+                                raise
                 else:
                     raise aiohttp.ClientError("Failed to refresh token")
-            elif resp.status != 200:
+            elif resp.status not in [200, 202, 204]:
+                error_text = await resp.text()
+                _LOGGER.error(f"API request failed: {resp.status} - {error_text}")
                 raise aiohttp.ClientError(f"API request failed: {resp.status}")
             else:
-                return await resp.json()
+                # Try to parse as JSON, but handle empty responses for PATCH/PUT/DELETE
+                try:
+                    return await resp.json()
+                except aiohttp.ContentTypeError:
+                    if method.upper() in ['PATCH', 'PUT', 'DELETE'] and resp.status in [200, 202, 204]:
+                        return {"status": "success", "message": f"Operation completed with status {resp.status}"}
+                    else:
+                        raise
 
 
 class VCFDomain:

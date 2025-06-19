@@ -149,10 +149,23 @@ class VCFUpgradeService:
         
         try:
             data = {"targetVersion": target_version}
-            await self.vcf_client.api_request(f"/v1/releases/domains/{domain_id}", method="PATCH", data=data)
-            _LOGGER.info(f"Successfully targeted version {target_version} for domain {domain_id}")
+            
+            _LOGGER.debug(f"Domain {domain_id}: Making PATCH request to /v1/releases/domains/{domain_id} with data: {data}")
+            
+            # Use the VCF API client with better error handling
+            response = await self.vcf_client.api_request(f"/v1/releases/domains/{domain_id}", method="PATCH", data=data)
+            
+            _LOGGER.info(f"Successfully targeted version {target_version} for domain {domain_id}, response: {response}")
+            
         except Exception as e:
-            raise Exception(f"Failed to target VCF version: {e}")
+            # Check if it's a JSON decode error (likely HTML error response)
+            if "unexpected mimetype" in str(e) or "JSON" in str(e):
+                error_msg = f"API returned non-JSON response. This might indicate the endpoint is not available or the request format is incorrect. Error: {e}"
+            else:
+                error_msg = f"Failed to target VCF version: {e}"
+            
+            _LOGGER.error(f"Domain {domain_id}: {error_msg}")
+            raise Exception(error_msg)
     
     async def _download_bundles(self, domain_id: str, next_release: Dict[str, Any]):
         """Download all necessary bundles."""
@@ -213,15 +226,19 @@ class VCFUpgradeService:
             
             # Extract resource types
             resources_data = []
-            for resource in first_response.get("resources", []):
-                resource_type = resource.get("resourceType")
-                if resource_type:
-                    resources_data.append({
-                        "resourceType": resource_type,
-                        "resourceId": resource.get("resourceId"),
-                        "resourceName": resource.get("resourceName"),
-                        "domain": resource.get("domain")
-                    })
+            first_response_resources = first_response.get("resources", [])
+            
+            if isinstance(first_response_resources, list):
+                for resource in first_response_resources:
+                    if isinstance(resource, dict):
+                        resource_type = resource.get("resourceType")
+                        if resource_type:
+                            resources_data.append({
+                                "resourceType": resource_type,
+                                "resourceId": resource.get("resourceId"),
+                                "resourceName": resource.get("resourceName"),
+                                "domain": resource.get("domain")
+                            })
             
             # Step 2: Get target versions for resources
             bom_data = next_release.get("bom", [])
@@ -261,21 +278,35 @@ class VCFUpgradeService:
             
             # Store resource info for later use
             resource_info = {}
+            second_response_resources = second_response.get("resources", [])
             
-            for resource in second_response.get("resources", []):
-                resource_id = resource.get("resourceId")
-                resource_type = resource.get("resourceType")
-                
-                if resource_id and resource_type:
-                    resource_info[resource_type] = resource_id
-                
-                check_set_data["resources"].append({
-                    "resourceType": resource.get("resourceType"),
-                    "resourceId": resource.get("resourceId"),
-                    "resourceName": resource.get("resourceName"),
-                    "domain": resource.get("domain"),
-                    "checkSets": [{"checkSetId": cs.get("checkSetId")} for cs in resource.get("checkSets", [])]
-                })
+            if isinstance(second_response_resources, list):
+                for resource in second_response_resources:
+                    if isinstance(resource, dict):
+                        resource_id = resource.get("resourceId")
+                        resource_type = resource.get("resourceType")
+                        
+                        if resource_id and resource_type:
+                            resource_info[resource_type] = resource_id
+                        
+                        # Prepare check sets data
+                        check_sets_list = []
+                        resource_check_sets = resource.get("checkSets", [])
+                        
+                        if isinstance(resource_check_sets, list):
+                            for cs in resource_check_sets:
+                                if isinstance(cs, dict):
+                                    check_set_id = cs.get("checkSetId")
+                                    if check_set_id:
+                                        check_sets_list.append({"checkSetId": check_set_id})
+                        
+                        check_set_data["resources"].append({
+                            "resourceType": resource.get("resourceType"),
+                            "resourceId": resource.get("resourceId"),
+                            "resourceName": resource.get("resourceName"),
+                            "domain": resource.get("domain"),
+                            "checkSets": check_sets_list
+                        })
             
             # Store resource info for upgrade execution
             if domain_id not in self._upgrade_states:
@@ -284,7 +315,12 @@ class VCFUpgradeService:
             
             # Execute pre-checks
             precheck_response = await self.vcf_client.api_request("/v1/system/check-sets", method="POST", data=check_set_data)
-            run_id = precheck_response.get("id")
+            
+            # Handle potential string response from PATCH operations
+            if isinstance(precheck_response, dict):
+                run_id = precheck_response.get("id")
+            else:
+                raise Exception("Pre-check execution did not return expected response format")
             
             if not run_id:
                 raise Exception("No run ID returned from pre-check execution")
@@ -292,6 +328,10 @@ class VCFUpgradeService:
             # Wait for pre-checks to complete
             while True:
                 status_response = await self.vcf_client.api_request(f"/v1/system/check-sets/{run_id}")
+                
+                if not isinstance(status_response, dict):
+                    raise Exception("Unexpected response format from status check")
+                    
                 status = status_response.get("status")
                 
                 if status == "COMPLETED_WITH_SUCCESS":
@@ -303,10 +343,19 @@ class VCFUpgradeService:
             
             # Check for errors and warnings
             assessment_output = status_response.get("presentedArtifactsMap", {})
-            validation_summary = assessment_output.get("validation-domain-summary", [{}])[0]
-            
-            error_count = validation_summary.get("errorValidationsCount", 0)
-            warning_count = validation_summary.get("warningGapsCount", 0)
+            if isinstance(assessment_output, dict):
+                validation_summary = assessment_output.get("validation-domain-summary", [{}])
+                if isinstance(validation_summary, list) and len(validation_summary) > 0:
+                    validation_data = validation_summary[0]
+                    if isinstance(validation_data, dict):
+                        error_count = validation_data.get("errorValidationsCount", 0)
+                        warning_count = validation_data.get("warningGapsCount", 0)
+                    else:
+                        error_count = warning_count = 0
+                else:
+                    error_count = warning_count = 0
+            else:
+                error_count = warning_count = 0
             
             if error_count > 0 or warning_count > 0:
                 # Get domain info for URL
@@ -357,9 +406,12 @@ Waiting for acknowledgement..."""
                     params={"targetVersion": target_version}
                 )
                 
+                if not isinstance(upgradables_response, dict):
+                    raise Exception("Unexpected response format from upgradables endpoint")
+                
                 available_upgrades = [
                     upgrade for upgrade in upgradables_response.get("elements", [])
-                    if upgrade.get("status") == "AVAILABLE"
+                    if isinstance(upgrade, dict) and upgrade.get("status") == "AVAILABLE"
                 ]
                 
                 if not available_upgrades:
@@ -368,18 +420,29 @@ Waiting for acknowledgement..."""
                 
                 # Process each available upgrade
                 for upgrade in available_upgrades:
+                    if not isinstance(upgrade, dict):
+                        continue
+                        
                     bundle_id = upgrade.get("bundleId")
                     if not bundle_id:
                         continue
                     
                     # Get bundle details to determine component type
                     bundle_response = await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}")
+                    
+                    if not isinstance(bundle_response, dict):
+                        continue
+                        
                     components = bundle_response.get("components", [])
                     
-                    if not components:
+                    if not components or not isinstance(components, list):
                         continue
                     
-                    component_type = components[0].get("type", "")
+                    component_data = components[0]
+                    if not isinstance(component_data, dict):
+                        continue
+                        
+                    component_type = component_data.get("type", "")
                     
                     # Execute upgrade based on component type
                     if "SDDC_MANAGER" in component_type:
@@ -466,13 +529,24 @@ Waiting for acknowledgement..."""
                 params={"bundleId": bundle_id}
             )
             
-            nsxt_manager_cluster_id = nsx_resources.get("nsxtManagerCluster", {}).get("id")
+            if not isinstance(nsx_resources, dict):
+                raise Exception("Unexpected response format from NSX resources endpoint")
+            
+            nsxt_manager_cluster = nsx_resources.get("nsxtManagerCluster", {})
             nsxt_host_clusters = nsx_resources.get("nsxtHostClusters", [])
             
-            if not nsxt_manager_cluster_id or not nsxt_host_clusters:
-                raise Exception("Required NSX resources not found")
+            if not isinstance(nsxt_manager_cluster, dict) or not isinstance(nsxt_host_clusters, list):
+                raise Exception("Invalid NSX resources structure")
+            
+            nsxt_manager_cluster_id = nsxt_manager_cluster.get("id")
+            
+            if not nsxt_host_clusters or not isinstance(nsxt_host_clusters[0], dict):
+                raise Exception("Required NSX host clusters not found")
             
             nsxt_host_cluster_id = nsxt_host_clusters[0].get("id")
+            
+            if not nsxt_manager_cluster_id or not nsxt_host_cluster_id:
+                raise Exception("Required NSX resource IDs not found")
             
             upgrade_data = {
                 "bundleId": bundle_id,
