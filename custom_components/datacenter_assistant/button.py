@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
-_DOMAIN = "datacenter_assistant"  # Lokale Variable anstatt Import
+_DOMAIN = "datacenter_assistant"
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up the button platform."""

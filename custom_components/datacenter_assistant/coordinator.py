@@ -5,18 +5,10 @@ import time
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from .utils import truncate_description, version_tuple, make_vcf_api_request
 
 _LOGGER = logging.getLogger(__name__)
-
 _DOMAIN = "datacenter_assistant"
-
-def truncate_description(text, max_length=61):
-    """Truncate description text to max_length characters + '...' if needed."""
-    if not text or not isinstance(text, str):
-        return text
-    if len(text) <= max_length:
-        return text
-    return text[:max_length] + "..."
 
 def get_coordinator(hass, config_entry):
     """Get the data update coordinator."""
@@ -250,13 +242,6 @@ def get_coordinator(hass, config_entry):
                             
                             # Compare versions (assuming they are in format x.y.z.w)
                             try:
-                                def version_tuple(v):
-                                    parts = v.split('.')
-                                    # Normalize to 4 parts
-                                    while len(parts) < 4:
-                                        parts.append('0')
-                                    return tuple(map(int, parts[:4]))
-                                
                                 current_tuple = version_tuple(current_version)
                                 release_tuple = version_tuple(release_version)
                                 min_compatible_tuple = version_tuple(min_compatible_version)
@@ -280,18 +265,7 @@ def get_coordinator(hass, config_entry):
                         _LOGGER.debug(f"Found {len(applicable_releases)} applicable releases for domain {domain_name}")
                         
                         # Sort by version to get the oldest (lowest version number)
-                        def version_tuple_for_sort(v):
-                            parts = v.split('.')
-                            while len(parts) < 4:
-                                parts.append('0')
-                            try:
-                                return tuple(map(int, parts[:4]))
-                            except ValueError:
-                                # Handle non-numeric version parts
-                                _LOGGER.warning(f"Non-numeric version part in {v}, using string comparison")
-                                return tuple(parts[:4])
-                        
-                        applicable_releases.sort(key=lambda x: version_tuple_for_sort(x.get("version", "0.0.0.0")))
+                        applicable_releases.sort(key=lambda x: version_tuple(x.get("version", "0.0.0.0")))
                         selected_release = applicable_releases[0]
                         
                         # Capture the whole JSON as domainX_nextRelease

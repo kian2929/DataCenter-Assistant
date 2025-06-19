@@ -1,11 +1,9 @@
 from homeassistant import config_entries
 import voluptuous as vol
 import logging
+from . import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
-# DOMAIN entfernen - wird aus __init__.py importiert
-from . import DOMAIN
 
 class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for DataCenter Assistant."""
@@ -16,16 +14,16 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         if user_input is not None:
             # Validate VCF configuration
-            vcf_url = user_input.get("vcf_url", "").strip()
-            vcf_username = user_input.get("vcf_username", "").strip()
-            vcf_password = user_input.get("vcf_password", "").strip()
+            required_fields = {
+                "vcf_url": "missing_vcf_url",
+                "vcf_username": "missing_vcf_username", 
+                "vcf_password": "missing_vcf_password"
+            }
             
-            if not vcf_url:
-                errors["vcf_url"] = "missing_vcf_url"
-            elif not vcf_username:
-                errors["vcf_username"] = "missing_vcf_username"
-            elif not vcf_password:
-                errors["vcf_password"] = "missing_vcf_password"
+            for field, error_key in required_fields.items():
+                if not user_input.get(field, "").strip():
+                    errors[field] = error_key
+                    break
             
             if not errors:
                 return self.async_create_entry(title="DataCenter Assistant", data=user_input)

@@ -41,9 +41,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         # Remove services
-        hass.services.async_remove(DOMAIN, "refresh_token")
-        hass.services.async_remove(DOMAIN, "trigger_upgrade")
-        hass.services.async_remove(DOMAIN, "download_bundle")
+        services_to_remove = ["refresh_token", "trigger_upgrade", "download_bundle"]
+        for service in services_to_remove:
+            hass.services.async_remove(DOMAIN, service)
         
         # Clean up data
         hass.data[DOMAIN].pop(entry.entry_id, None)
@@ -57,6 +57,17 @@ async def async_setup(hass: HomeAssistant, config):
     return True
 
 
+async def _validate_vcf_credentials(entry: ConfigEntry):
+    """Validate VCF credentials from config entry."""
+    vcf_url = entry.data.get("vcf_url")
+    vcf_username = entry.data.get("vcf_username", "")
+    vcf_password = entry.data.get("vcf_password", "")
+    
+    if not vcf_url or not vcf_username or not vcf_password:
+        return None, None, None
+    
+    return vcf_url, vcf_username, vcf_password
+
 async def _async_setup_services(hass: HomeAssistant, entry: ConfigEntry):
     """Set up services for VCF integration."""
     
@@ -64,11 +75,8 @@ async def _async_setup_services(hass: HomeAssistant, entry: ConfigEntry):
         """Service to refresh VCF token."""
         _LOGGER.info("Service: Refreshing VCF token")
         
-        vcf_url = entry.data.get("vcf_url")
-        vcf_username = entry.data.get("vcf_username", "")
-        vcf_password = entry.data.get("vcf_password", "")
-        
-        if not vcf_url or not vcf_username or not vcf_password:
+        vcf_url, vcf_username, vcf_password = await _validate_vcf_credentials(entry)
+        if not all([vcf_url, vcf_username, vcf_password]):
             _LOGGER.warning("Cannot refresh VCF token: Missing credentials")
             return
             

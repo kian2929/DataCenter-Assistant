@@ -4,17 +4,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import get_coordinator
 
 _LOGGER = logging.getLogger(__name__)
+_DOMAIN = "datacenter_assistant"
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up binary sensors for VCF system status."""
     try:
         # Get or create coordinator
-        coordinator = hass.data.get("datacenter_assistant", {}).get("coordinator")
+        coordinator = hass.data.get(_DOMAIN, {}).get("coordinator")
         
         if not coordinator:
             coordinator = get_coordinator(hass, config_entry)
-            hass.data.setdefault("datacenter_assistant", {})["coordinator"] = coordinator
+            hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
             
         await coordinator.async_config_entry_first_refresh()
         

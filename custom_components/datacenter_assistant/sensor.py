@@ -8,20 +8,11 @@ from aiohttp import ClientError
 import asyncio
 from .coordinator import get_coordinator, get_resource_coordinator
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .utils import truncate_description, get_resource_icon, safe_name_conversion
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
-
-# DOMAIN-Definition entfernen und stattdessen hier eine lokale Variable verwenden
 _DOMAIN = "datacenter_assistant"
-
-def truncate_description(text, max_length=61):
-    """Truncate description text to max_length characters + '...' if needed."""
-    if not text or not isinstance(text, str):
-        return text
-    if len(text) <= max_length:
-        return text
-    return text[:max_length] + "..."
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Setup sensor platform."""
@@ -469,22 +460,14 @@ class VCFDomainCapacitySensor(CoordinatorEntity, SensorEntity):
         self._domain_name = domain_name
         self._domain_prefix = domain_prefix
         self._resource_type = resource_type
-        
-        # Create entity name and unique ID
-        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+         # Create entity name and unique ID
+        safe_name = safe_name_conversion(domain_name)
         self._attr_name = f"VCF {self._domain_prefix} {resource_type.upper()}"
         self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_{resource_type}"
-
+    
     @property
     def icon(self):
-        if self._resource_type == "cpu":
-            return "mdi:cpu-64-bit"
-        elif self._resource_type == "memory":
-            return "mdi:memory"
-        elif self._resource_type == "storage":
-            return "mdi:harddisk"
-        else:
-            return "mdi:server"
+        return get_resource_icon(self._resource_type)
 
     @property
     def state(self):
@@ -575,8 +558,8 @@ class VCFClusterHostCountSensor(CoordinatorEntity, SensorEntity):
         self._cluster_name = cluster_name
         
         # Create entity name and unique ID
-        safe_domain_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        safe_cluster_name = cluster_name.lower().replace(' ', '_').replace('-', '_')
+        safe_domain_name = safe_name_conversion(domain_name)
+        safe_cluster_name = safe_name_conversion(cluster_name)
         self._attr_name = f"VCF {self._domain_prefix} {cluster_name} host count"
         self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_domain_name}_{safe_cluster_name}_host_count"
         self._attr_icon = "mdi:server-network"
@@ -646,23 +629,15 @@ class VCFHostResourceSensor(CoordinatorEntity, SensorEntity):
         self._host_id = host_id
         self._hostname = hostname
         self._resource_type = resource_type
-        
-        # Create entity name and unique ID
-        safe_domain_name = domain_name.lower().replace(' ', '_').replace('-', '_')
-        safe_hostname = hostname.lower().replace(' ', '_').replace('-', '_')
+         # Create entity name and unique ID
+        safe_domain_name = safe_name_conversion(domain_name)
+        safe_hostname = safe_name_conversion(hostname)
         self._attr_name = f"VCF {self._domain_prefix} {hostname} {resource_type.upper()}"
         self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_domain_name}_{safe_hostname}_{resource_type}"
-
+    
     @property
     def icon(self):
-        if self._resource_type == "cpu":
-            return "mdi:cpu-64-bit"
-        elif self._resource_type == "memory":
-            return "mdi:memory"
-        elif self._resource_type == "storage":
-            return "mdi:harddisk"
-        else:
-            return "mdi:server"
+        return get_resource_icon(self._resource_type)
 
     @property
     def state(self):
@@ -727,21 +702,9 @@ class VCFHostResourceSensor(CoordinatorEntity, SensorEntity):
                         resource_info = host.get(self._resource_type, {})
                         attributes["fqdn"] = host.get("fqdn", "Unknown")
                         
-                        if self._resource_type == "cpu":
-                            attributes.update({
-                                "used_mhz": resource_info.get("used_mhz", 0),
-                                "total_mhz": resource_info.get("total_mhz", 0),
-                                "cores": resource_info.get("cores", 0)
-                            })
-                        elif self._resource_type in ["memory", "storage"]:
-                            used_mb = resource_info.get("used_mb", 0)
-                            total_mb = resource_info.get("total_mb", 0)
-                            attributes.update({
-                                "used_mb": used_mb,
-                                "total_mb": total_mb,
-                                "used_gb": round(used_mb / 1024, 2) if used_mb > 0 else 0,
-                                "total_gb": round(total_mb / 1024, 2) if total_mb > 0 else 0
-                            })
+                        # Extract resource-specific attributes
+                        attrs = self._get_resource_attributes(resource_info)
+                        attributes.update(attrs)
                         break
                 if attributes.get("fqdn"):  # If we found the host, break outer loop too
                     break
@@ -751,4 +714,23 @@ class VCFHostResourceSensor(CoordinatorEntity, SensorEntity):
         except Exception as e:
             _LOGGER.error(f"Error getting {self._resource_type} attributes for host {self._hostname}: {e}")
             return {"error": str(e)}
+    
+    def _get_resource_attributes(self, resource_info):
+        """Get resource-specific attributes based on resource type."""
+        if self._resource_type == "cpu":
+            return {
+                "used_mhz": resource_info.get("used_mhz", 0),
+                "total_mhz": resource_info.get("total_mhz", 0),
+                "cores": resource_info.get("cores", 0)
+            }
+        elif self._resource_type in ["memory", "storage"]:
+            used_mb = resource_info.get("used_mb", 0)
+            total_mb = resource_info.get("total_mb", 0)
+            return {
+                "used_mb": used_mb,
+                "total_mb": total_mb,
+                "used_gb": round(used_mb / 1024, 2) if used_mb > 0 else 0,
+                "total_gb": round(total_mb / 1024, 2) if total_mb > 0 else 0
+            }
+        return {}
 
