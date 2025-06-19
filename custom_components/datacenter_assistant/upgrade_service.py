@@ -583,8 +583,8 @@ class VCFUpgradeService:
 Errors: {error_count}
 Warnings: {warning_count}
 
-More details:
-https://{domain_fqdn}/ui/sddc-manager/inventory/domains/mgmt-vi-domains/{domain_id}/updates/pre-check-details/DOMAIN/{domain_id}/false(monitoring-panel:monitoring/tasks)?assessmentId={run_id}
+More detailscan be found in the SDDC Manager UI at:
+https://{domain_fqdn}/ui/sddc-manager/inventory/domains/mgmt-vi-domains/{domain_id}/summary(monitoring-panel:monitoring/tasks)
 
 Waiting for acknowledgement..."""
                 
