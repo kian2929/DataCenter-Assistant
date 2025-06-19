@@ -1,0 +1,89 @@
+I want you to add functionality to this Home Assistant integration, where the usage of each domain is shown inside the home assistant.
+
+Idea is to have differen sensor entities with the name "VCF domainX <resource>" (so, something like "VCF domain1 CPU"). "domainX is just an arbitary name we give to each domain we have. This happens dynamically. Check coordinator.py
+
+Following should happen for each domain:
+
+To get the necessary information, you need to have "domainId", which is already collected some time in the code. So check the coordinator.py plese. I think it happens when a call is made to /v1/domains
+
+After finding the information, you should make an API call to this enpoint
+
+
+GET /v1/domains/<domainId> (the actual enpoint is written /v1/domains/{id})
+
+Returned body is the "Domain" model object. Please see the API-reference.json
+Essentially, you hva two sections here we want to capture.
+
+- "capacity"
+- "clusters" > (for each cluster) > "id"
+
+
+"capacity" key has an object "Capacity" as a value which shows HW usage information. Check the API reference for exact structure, but it looks like this:
+
+
+  "capacity": {
+        "cpu": {
+            "used": {
+                "value": 18.49399947695396,
+                "unit": "GHz"
+            },
+            "total": {
+                "value": 95.99999728493458,
+                "unit": "GHz"
+            },
+            "numberOfCores": 48
+        },
+        "memory": {
+            "used": {
+                "value": 96.5791015625,
+                "unit": "GB"
+            },
+            "total": {
+                "value": 383.99609375,
+                "unit": "GB"
+            }
+        },
+        "storage": {
+            "used": {
+                "value": 0.6497074890103249,
+                "unit": "TB"
+            },
+            "total": {
+                "value": 2.053680419921875,
+                "unit": "TB"
+            }
+        }
+    },
+
+
+We also desire to se how many hosts we have in each cluster, and how much resource usage each of them has. So, using the cluster ID we got previously, we want to make this API call for each cluster
+GET /v1/clusters/{id}
+
+Response type will be an object "Cluster". Please see the API-reference.json
+You'd want to capture "name" and the length of "hosts" as wel as "id" of each host from the same "hosts" list.
+
+
+Display each cluster with a sensor name
+"VCF domainX clusterName host count"
+
+
+Finally, we want to make API call to get CPU usage information for each ESX host:
+GET /v1/hosts/{id}
+
+Response body will be type "Host" model. Please see the API-reference.json
+From this response, you'd want to capture 
+"fqdn" (extract the hostname. so string before the first dot)
+"cpu" (model "Cpu", see API ref. "usedFrequencyMHz" and "frequencyMHz" is enough)
+"memory" (model "Memory", see API ref. "totalCapacityMB" and "usedCapacityMB" is enough)
+"storage" (model "Storage", see API ref. "totalCapacityMB" and "usedCapacityMB" is enough)
+
+Show each of these as i.e 
+"VCF domainX hostName CPU"
+
+
+
+
+
+
+
+Obviously, whole information above should be polled regularly, let's say every 10 seconds.
