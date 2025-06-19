@@ -266,51 +266,86 @@ class VCFUpgradeService:
     
     async def _run_prechecks(self, domain_id: str, target_version: str, next_release: Dict[str, Any]):
         """Run pre-checks for the upgrade."""
+        _LOGGER.info(f"Domain {domain_id}: Starting pre-checks for target version {target_version}")
         self.set_upgrade_status(domain_id, "running_prechecks")
         self.set_upgrade_logs(domain_id, "**Running Pre-checks**\n\nRunning upgrade pre-checks...")
         
         try:
             # Step 1: Get available check-sets
+            _LOGGER.debug(f"Domain {domain_id}: Step 1 - Getting available check-sets")
             query_data = {
                 "checkSetType": "UPGRADE",
                 "domains": [{"domainId": domain_id}]
             }
             
+            _LOGGER.debug(f"Domain {domain_id}: Sending initial check-sets query: {query_data}")
             first_response = await self.vcf_client.api_request("/v1/system/check-sets/queries", method="POST", data=query_data)
+            _LOGGER.debug(f"Domain {domain_id}: Initial check-sets response: {first_response}")
             
             # Extract resource types
             resources_data = []
             first_response_resources = first_response.get("resources", [])
+            _LOGGER.info(f"Domain {domain_id}: Found {len(first_response_resources) if isinstance(first_response_resources, list) else 0} resources in initial response")
             
             if isinstance(first_response_resources, list):
-                for resource in first_response_resources:
+                for i, resource in enumerate(first_response_resources, 1):
                     if isinstance(resource, dict):
                         resource_type = resource.get("resourceType")
+                        resource_id = resource.get("resourceId")
+                        resource_name = resource.get("resourceName")
+                        
+                        _LOGGER.info(f"Domain {domain_id}: Resource {i} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}")
+                        
                         if resource_type:
                             resources_data.append({
                                 "resourceType": resource_type,
-                                "resourceId": resource.get("resourceId"),
-                                "resourceName": resource.get("resourceName"),
+                                "resourceId": resource_id,
+                                "resourceName": resource_name,
                                 "domain": resource.get("domain")
                             })
             
+            _LOGGER.info(f"Domain {domain_id}: Processed {len(resources_data)} valid resources")
+            
             # Step 2: Get target versions for resources
+            _LOGGER.debug(f"Domain {domain_id}: Step 2 - Processing BOM (Bill of Materials)")
             bom_data = next_release.get("bom", [])
-            bom_map = {item.get("name"): item.get("version") for item in bom_data if item.get("name") and item.get("version")}
+            _LOGGER.info(f"Domain {domain_id}: Found {len(bom_data) if isinstance(bom_data, list) else 0} BOM entries")
+            
+            bom_map = {}
+            if isinstance(bom_data, list):
+                for i, item in enumerate(bom_data, 1):
+                    if isinstance(item, dict):
+                        name = item.get("name")
+                        version = item.get("version")
+                        _LOGGER.debug(f"Domain {domain_id}: BOM {i} - Component: {name}, Version: {version}")
+                        if name and version:
+                            bom_map[name] = version
+            
+            _LOGGER.info(f"Domain {domain_id}: Created BOM mapping for {len(bom_map)} components: {list(bom_map.keys())}")
             
             # Prepare resources with target versions
             resources_with_versions = []
+            _LOGGER.debug(f"Domain {domain_id}: Mapping resources to target versions")
+            
             for resource_data in resources_data:
                 resource_type = resource_data["resourceType"]
                 target_resource_version = bom_map.get(resource_type)
+                
+                _LOGGER.debug(f"Domain {domain_id}: Resource {resource_type} -> Target version: {target_resource_version}")
                 
                 if target_resource_version:
                     resources_with_versions.append({
                         "resourceType": resource_type,
                         "resourceTargetVersion": target_resource_version
                     })
+                    _LOGGER.info(f"Domain {domain_id}: Mapped {resource_type} to version {target_resource_version}")
+                else:
+                    _LOGGER.warning(f"Domain {domain_id}: No target version found for resource type {resource_type}")
+            
+            _LOGGER.info(f"Domain {domain_id}: {len(resources_with_versions)} resources mapped to target versions")
             
             # Step 3: Get detailed check-sets
+            _LOGGER.debug(f"Domain {domain_id}: Step 3 - Getting detailed check-sets")
             detailed_query_data = {
                 "checkSetType": "UPGRADE",
                 "domains": [{
@@ -319,12 +354,18 @@ class VCFUpgradeService:
                 }]
             }
             
+            _LOGGER.debug(f"Domain {domain_id}: Sending detailed check-sets query: {detailed_query_data}")
             second_response = await self.vcf_client.api_request("/v1/system/check-sets/queries", method="POST", data=detailed_query_data)
+            _LOGGER.debug(f"Domain {domain_id}: Detailed check-sets response keys: {list(second_response.keys()) if isinstance(second_response, dict) else 'Not a dict'}")
+            
+            query_id = second_response.get("queryId")
+            _LOGGER.info(f"Domain {domain_id}: Got query ID: {query_id}")
             
             # Step 4: Prepare and execute check-sets
+            _LOGGER.debug(f"Domain {domain_id}: Step 4 - Preparing check-sets for execution")
             check_set_data = {
                 "resources": [],
-                "queryId": second_response.get("queryId"),
+                "queryId": query_id,
                 "metadata": {
                     "targetVersion": target_version
                 }
@@ -333,12 +374,16 @@ class VCFUpgradeService:
             # Store resource info for later use
             resource_info = {}
             second_response_resources = second_response.get("resources", [])
+            _LOGGER.info(f"Domain {domain_id}: Processing {len(second_response_resources) if isinstance(second_response_resources, list) else 0} resources from detailed response")
             
             if isinstance(second_response_resources, list):
-                for resource in second_response_resources:
+                for i, resource in enumerate(second_response_resources, 1):
                     if isinstance(resource, dict):
                         resource_id = resource.get("resourceId")
                         resource_type = resource.get("resourceType")
+                        resource_name = resource.get("resourceName")
+                        
+                        _LOGGER.info(f"Domain {domain_id}: Processing resource {i} - Type: {resource_type}, ID: {resource_id}, Name: {resource_name}")
                         
                         if resource_id and resource_type:
                             resource_info[resource_type] = resource_id
@@ -347,12 +392,18 @@ class VCFUpgradeService:
                         check_sets_list = []
                         resource_check_sets = resource.get("checkSets", [])
                         
+                        _LOGGER.debug(f"Domain {domain_id}: Resource {resource_type} has {len(resource_check_sets) if isinstance(resource_check_sets, list) else 0} check sets")
+                        
                         if isinstance(resource_check_sets, list):
-                            for cs in resource_check_sets:
+                            for j, cs in enumerate(resource_check_sets, 1):
                                 if isinstance(cs, dict):
                                     check_set_id = cs.get("checkSetId")
+                                    check_set_name = cs.get("checkSetName", "Unknown")
+                                    _LOGGER.debug(f"Domain {domain_id}: Check set {j} for {resource_type} - ID: {check_set_id}, Name: {check_set_name}")
                                     if check_set_id:
                                         check_sets_list.append({"checkSetId": check_set_id})
+                        
+                        _LOGGER.info(f"Domain {domain_id}: Added {len(check_sets_list)} check sets for resource {resource_type}")
                         
                         check_set_data["resources"].append({
                             "resourceType": resource.get("resourceType"),
@@ -362,56 +413,99 @@ class VCFUpgradeService:
                             "checkSets": check_sets_list
                         })
             
+            _LOGGER.info(f"Domain {domain_id}: Prepared check-sets for {len(check_set_data['resources'])} resources")
+            _LOGGER.debug(f"Domain {domain_id}: Final check-set data structure: {check_set_data}")
+            
             # Store resource info for upgrade execution
             if domain_id not in self._upgrade_states:
                 self._upgrade_states[domain_id] = {}
             self._upgrade_states[domain_id]["resource_info"] = resource_info
+            _LOGGER.debug(f"Domain {domain_id}: Stored resource info: {resource_info}")
             
             # Execute pre-checks
+            _LOGGER.info(f"Domain {domain_id}: Executing pre-checks...")
             precheck_response = await self.vcf_client.api_request("/v1/system/check-sets", method="POST", data=check_set_data)
+            _LOGGER.debug(f"Domain {domain_id}: Pre-check execution response: {precheck_response}")
             
             # Handle potential string response from PATCH operations
             if isinstance(precheck_response, dict):
                 run_id = precheck_response.get("id")
             else:
+                _LOGGER.warning(f"Domain {domain_id}: Pre-check response is not a dict: {precheck_response}")
                 raise Exception("Pre-check execution did not return expected response format")
             
             if not run_id:
-                raise Exception("No run ID returned from pre-check execution")
+                raise Exception(f"No run ID returned from pre-check execution. Response: {precheck_response}")
+            
+            _LOGGER.info(f"Domain {domain_id}: Pre-checks started with run ID: {run_id}")
             
             # Wait for pre-checks to complete
+            check_count = 0
             while True:
+                check_count += 1
+                _LOGGER.debug(f"Domain {domain_id}: Pre-check status check #{check_count}")
+                
                 status_response = await self.vcf_client.api_request(f"/v1/system/check-sets/{run_id}")
                 
                 if not isinstance(status_response, dict):
-                    raise Exception("Unexpected response format from status check")
+                    raise Exception(f"Unexpected response format from status check: {status_response}")
                     
                 status = status_response.get("status")
+                progress = status_response.get("progress", {})
+                
+                _LOGGER.info(f"Domain {domain_id}: Pre-check status: {status}")
+                if isinstance(progress, dict) and progress:
+                    _LOGGER.debug(f"Domain {domain_id}: Pre-check progress: {progress}")
                 
                 if status == "COMPLETED_WITH_SUCCESS":
+                    _LOGGER.info(f"Domain {domain_id}: Pre-checks completed successfully")
                     break
                 elif status == "COMPLETED_WITH_FAILURE":
+                    _LOGGER.error(f"Domain {domain_id}: Pre-checks failed")
                     raise Exception("Pre-checks failed")
+                elif status in ["FAILED", "CANCELLED"]:
+                    _LOGGER.error(f"Domain {domain_id}: Pre-checks ended with status: {status}")
+                    raise Exception(f"Pre-checks ended with status: {status}")
                 
+                _LOGGER.debug(f"Domain {domain_id}: Pre-checks still running, waiting 30 seconds...")
                 await asyncio.sleep(30)  # Check every 30 seconds
             
             # Check for errors and warnings
+            _LOGGER.debug(f"Domain {domain_id}: Processing pre-check results")
             assessment_output = status_response.get("presentedArtifactsMap", {})
+            _LOGGER.debug(f"Domain {domain_id}: Assessment output keys: {list(assessment_output.keys()) if isinstance(assessment_output, dict) else 'Not a dict'}")
+            
+            error_count = 0
+            warning_count = 0
+            
             if isinstance(assessment_output, dict):
                 validation_summary = assessment_output.get("validation-domain-summary", [{}])
+                _LOGGER.debug(f"Domain {domain_id}: Validation summary type: {type(validation_summary)}, length: {len(validation_summary) if isinstance(validation_summary, list) else 'N/A'}")
+                
                 if isinstance(validation_summary, list) and len(validation_summary) > 0:
                     validation_data = validation_summary[0]
+                    _LOGGER.debug(f"Domain {domain_id}: Validation data: {validation_data}")
+                    
                     if isinstance(validation_data, dict):
                         error_count = validation_data.get("errorValidationsCount", 0)
                         warning_count = validation_data.get("warningGapsCount", 0)
+                        
+                        # Log additional validation details if available
+                        for key, value in validation_data.items():
+                            if "count" in key.lower() or "error" in key.lower() or "warning" in key.lower():
+                                _LOGGER.debug(f"Domain {domain_id}: {key}: {value}")
                     else:
-                        error_count = warning_count = 0
+                        _LOGGER.warning(f"Domain {domain_id}: Validation data is not a dict: {validation_data}")
                 else:
-                    error_count = warning_count = 0
+                    _LOGGER.warning(f"Domain {domain_id}: Validation summary is empty or not a list")
             else:
-                error_count = warning_count = 0
+                _LOGGER.warning(f"Domain {domain_id}: Assessment output is not a dict")
+            
+            _LOGGER.info(f"Domain {domain_id}: Pre-check results - Errors: {error_count}, Warnings: {warning_count}")
             
             if error_count > 0 or warning_count > 0:
+                _LOGGER.warning(f"Domain {domain_id}: Pre-checks completed with issues - Errors: {error_count}, Warnings: {warning_count}")
+                
                 # Get domain info for URL
                 domain_info = self.hass.data.get("datacenter_assistant", {}).get("coordinator", {}).data
                 domain_fqdn = None
@@ -420,7 +514,11 @@ class VCFUpgradeService:
                     for domain in domain_info["domains"]:
                         if domain.get("id") == domain_id:
                             domain_fqdn = domain.get("sddc_manager_fqdn")
+                            _LOGGER.debug(f"Domain {domain_id}: Found domain FQDN: {domain_fqdn}")
                             break
+                
+                if not domain_fqdn:
+                    _LOGGER.warning(f"Domain {domain_id}: Could not find domain FQDN for pre-check details URL")
                 
                 logs = f"""**Pre-check Results**
 
@@ -435,16 +533,25 @@ Waiting for acknowledgement..."""
                 self.set_upgrade_status(domain_id, "waiting_acknowledgement")
                 self.set_upgrade_logs(domain_id, logs)
                 
+                _LOGGER.info(f"Domain {domain_id}: Waiting for user acknowledgement of pre-check issues")
+                
                 # Wait for acknowledgement
+                acknowledgement_wait_count = 0
                 while not self._upgrade_states.get(domain_id, {}).get("acknowledged", False):
+                    acknowledgement_wait_count += 1
+                    if acknowledgement_wait_count % 12 == 0:  # Log every minute (12 * 5 seconds)
+                        _LOGGER.debug(f"Domain {domain_id}: Still waiting for acknowledgement ({acknowledgement_wait_count * 5} seconds)")
                     await asyncio.sleep(5)
                 
+                _LOGGER.info(f"Domain {domain_id}: User acknowledged pre-check issues, continuing with upgrade")
                 # Reset acknowledgement flag
                 self._upgrade_states[domain_id]["acknowledged"] = False
             else:
+                _LOGGER.info(f"Domain {domain_id}: Pre-checks passed successfully with no errors or warnings")
                 self.set_upgrade_logs(domain_id, "**Pre-check Results**\n\nPre-check passed successfully. No warnings or errors. Continuing...")
             
         except Exception as e:
+            _LOGGER.error(f"Domain {domain_id}: Pre-checks failed with exception: {e}")
             raise Exception(f"Pre-checks failed: {e}")
     
     async def _start_upgrades(self, domain_id: str, target_version: str, domain_data: Dict[str, Any]):
@@ -505,8 +612,36 @@ Waiting for acknowledgement..."""
                         await asyncio.sleep(30)
                         continue
                 
+                # Check if we only have HOST components left (which we skip)
+                non_host_upgrades = []
+                for upgrade in available_upgrades:
+                    if not isinstance(upgrade, dict):
+                        continue
+                    bundle_id = upgrade.get("bundleId")
+                    if not bundle_id:
+                        continue
+                    
+                    try:
+                        bundle_response = await self.vcf_client.api_request(f"/v1/bundles/{bundle_id}")
+                        if isinstance(bundle_response, dict):
+                            components = bundle_response.get("components", [])
+                            if components and isinstance(components, list):
+                                component_data = components[0]
+                                if isinstance(component_data, dict):
+                                    component_type = component_data.get("type", "")
+                                    if component_type and "HOST" not in component_type:
+                                        non_host_upgrades.append(upgrade)
+                    except Exception as e:
+                        _LOGGER.debug(f"Domain {domain_id}: Failed to check component type for bundle {bundle_id}: {e}")
+                        non_host_upgrades.append(upgrade)  # Include if we can't check
+                
+                if not non_host_upgrades:
+                    _LOGGER.info(f"Domain {domain_id}: Only HOST upgrades remain, and HOST upgrades are not implemented. Considering upgrade complete.")
+                    break
+                
                 # Process each available upgrade
                 processed_count = 0
+                non_host_processed = 0
                 for i, upgrade in enumerate(available_upgrades, 1):
                     _LOGGER.info(f"Domain {domain_id}: Processing upgrade {i}/{len(available_upgrades)}")
                     
@@ -550,8 +685,8 @@ Waiting for acknowledgement..."""
                         continue
                         
                     component_type = component_data.get("type", "")
-                    component_name = component_data.get("name", "unknown")
-                    component_version = component_data.get("version", "unknown")
+                    component_name = component_data.get("description", "unknown")  # Use description as name
+                    component_version = component_data.get("toVersion", component_data.get("version", "unknown"))  # Use toVersion or fallback to version
                     
                     _LOGGER.info(f"Domain {domain_id}: Processing component - Type: {component_type}, Name: {component_name}, Version: {component_version}")
                     
@@ -561,19 +696,21 @@ Waiting for acknowledgement..."""
                             _LOGGER.info(f"Domain {domain_id}: Starting SDDC Manager upgrade with bundle {bundle_id}")
                             await self._upgrade_sddc_manager(domain_id, bundle_id)
                             processed_count += 1
+                            non_host_processed += 1
                         elif "NSX_T_MANAGER" in component_type:
                             _LOGGER.info(f"Domain {domain_id}: Starting NSX-T Manager upgrade with bundle {bundle_id}")
                             await self._upgrade_nsx(domain_id, bundle_id)
                             processed_count += 1
+                            non_host_processed += 1
                         elif "VCENTER" in component_type:
                             _LOGGER.info(f"Domain {domain_id}: Starting vCenter upgrade with bundle {bundle_id}")
                             await self._upgrade_vcenter(domain_id, bundle_id)
                             processed_count += 1
+                            non_host_processed += 1
                         elif "ESX_HOST" in component_type or "HOST" in component_type:
                             # Skip ESX host upgrades as per requirements but log properly
                             _LOGGER.info(f"Domain {domain_id}: Skipping ESX host upgrade for component {component_name} (HOST upgrades not implemented)")
-                            # Mark as processed so we don't loop indefinitely
-                            processed_count += 1
+                            # Don't count HOST components as processed to avoid infinite loop
                             continue
                         else:
                             _LOGGER.warning(f"Domain {domain_id}: Unknown component type: {component_type} for component {component_name}")
@@ -590,12 +727,21 @@ Waiting for acknowledgement..."""
                     _LOGGER.debug(f"Domain {domain_id}: Waiting 10 seconds before next upgrade...")
                     await asyncio.sleep(10)
                 
-                _LOGGER.info(f"Domain {domain_id}: Completed upgrade cycle {upgrade_cycle}, processed {processed_count} upgrades")
+                _LOGGER.info(f"Domain {domain_id}: Completed upgrade cycle {upgrade_cycle}, processed {processed_count} upgrades ({non_host_processed} non-HOST)")
                 
-                # If we didn't process any upgrades in this cycle, wait longer before checking again
-                if processed_count == 0:
-                    _LOGGER.info(f"Domain {domain_id}: No upgrades processed this cycle, waiting 60 seconds...")
-                    await asyncio.sleep(60)
+                # If we didn't process any non-HOST upgrades in this cycle, we might be done
+                if non_host_processed == 0:
+                    _LOGGER.info(f"Domain {domain_id}: No non-HOST upgrades processed this cycle")
+                    
+                    # Check if we should continue or exit
+                    if processed_count == 0:
+                        # Nothing processed at all - wait and try again
+                        _LOGGER.info(f"Domain {domain_id}: No upgrades processed at all, waiting 60 seconds...")
+                        await asyncio.sleep(60)
+                    else:
+                        # Only HOST upgrades were found - exit the loop since we don't process them
+                        _LOGGER.info(f"Domain {domain_id}: Only HOST upgrades remain, exiting upgrade loop")
+                        break
         
         except Exception as e:
             raise Exception(f"Component upgrades failed: {e}")
