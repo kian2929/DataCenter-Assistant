@@ -8,9 +8,7 @@
         "data": {
           "vcf_url": "VCF URL",
           "vcf_username": "VCF Username", 
-          "vcf_password": "VCF Password",
-          "vcf_token": "VCF Token (Optional)",
-          "vcf_refresh_token": "VCF Refresh Token (Optional)"
+          "vcf_password": "VCF Password"
         }
       }
     },

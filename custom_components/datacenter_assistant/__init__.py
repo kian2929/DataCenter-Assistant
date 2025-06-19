@@ -3,7 +3,6 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import homeassistant.helpers.entity_platform as platform
 import time
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,11 +20,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     logging.getLogger('custom_components.datacenter_assistant').setLevel(logging.CRITICAL)
     
     # Log integration loading
-    _LOGGER.debug("DataCenter Assistant integration loaded")    # Setup platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _LOGGER.debug("DataCenter Assistant integration loaded")
     
-    # Register services
-    await _async_setup_services(hass, entry)
+    # Setup platforms
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
     # Register services
     await _async_setup_services(hass, entry)

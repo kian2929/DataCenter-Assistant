@@ -37,8 +37,6 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required("vcf_url"): str,
                 vol.Required("vcf_username"): str,
                 vol.Required("vcf_password"): str,
-                vol.Optional("vcf_token", default=""): str,
-                vol.Optional("vcf_refresh_token", default=""): str,
             }),
             errors=errors
         )

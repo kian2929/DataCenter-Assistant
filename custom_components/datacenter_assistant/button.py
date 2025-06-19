@@ -1,6 +1,5 @@
 import logging
 import asyncio
-import voluptuous as vol
 import time
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import EntityCategory
@@ -37,7 +36,7 @@ class VCFRefreshTokenButton(ButtonEntity):
         self.hass = hass
         self.entry = entry
         self._attr_name = "VCF Refresh Token"
-        self._attr_unique_id = f"{entry.entry_id}_vcf_refresh_token"
+        self._attr_unique_id = f"{entry.entry_id}_vcf_manual_refresh"
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_icon = "mdi:refresh-circle"
     

@@ -21,8 +21,6 @@ def truncate_description(text, max_length=61):
 def get_coordinator(hass, config_entry):
     """Get the data update coordinator."""
     vcf_url = config_entry.data.get("vcf_url")
-    vcf_token = config_entry.data.get("vcf_token")
-    vcf_refresh_token = config_entry.data.get("vcf_refresh_token", "")
     vcf_username = config_entry.data.get("vcf_username", "")
     vcf_password = config_entry.data.get("vcf_password", "")
     token_expiry = config_entry.data.get("token_expiry", 0)  # Default 0 für unbekannt
