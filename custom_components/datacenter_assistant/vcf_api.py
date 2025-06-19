@@ -138,8 +138,10 @@ class VCFDomain:
     def find_applicable_releases(self, future_releases):
         """Find applicable releases for this domain."""
         if not self.current_version:
+            _LOGGER.warning(f"Domain {self.name}: No current version set, cannot find applicable releases")
             return []
         
+        _LOGGER.debug(f"Domain {self.name}: Finding applicable releases from {len(future_releases)} future releases")
         applicable_releases = []
         
         for release in future_releases:
@@ -147,6 +149,10 @@ class VCFDomain:
             is_applicable = release.get("isApplicable", False)
             release_version = release.get("version")
             min_compatible_version = release.get("minCompatibleVcfVersion")
+            
+            _LOGGER.debug(f"Domain {self.name}: Evaluating release {release_version}: "
+                        f"status={applicability_status}, applicable={is_applicable}, "
+                        f"minCompatible={min_compatible_version}")
             
             if (applicability_status == "APPLICABLE" and 
                 is_applicable and 
@@ -160,12 +166,18 @@ class VCFDomain:
                     
                     if release_tuple > current_tuple >= min_compatible_tuple:
                         applicable_releases.append(release)
-                        _LOGGER.debug(f"Release {release_version} is applicable for domain {self.name}")
+                        _LOGGER.debug(f"Domain {self.name}: Release {release_version} is applicable")
+                    else:
+                        _LOGGER.debug(f"Domain {self.name}: Release {release_version} does not meet version criteria: "
+                                    f"{release_version} > {self.current_version} >= {min_compatible_version}")
                 
                 except Exception as ve:
-                    _LOGGER.warning(f"Error comparing versions for release {release_version}: {ve}")
+                    _LOGGER.warning(f"Domain {self.name}: Error comparing versions for release {release_version}: {ve}")
                     continue
+            else:
+                _LOGGER.debug(f"Domain {self.name}: Release {release_version} does not meet applicability criteria")
         
+        _LOGGER.info(f"Domain {self.name}: Found {len(applicable_releases)} applicable releases")
         return applicable_releases
     
     def to_dict(self):

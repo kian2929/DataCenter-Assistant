@@ -91,9 +91,17 @@ class VCFCoordinatorManager:
                     domain_updates[domain.id] = domain.update_dict()
                     continue
                 
+                # Set current version on domain BEFORE calling find_applicable_releases
+                domain.current_version = current_version
+                _LOGGER.debug(f"Domain {domain.name}: Set current version to {current_version}")
+                
                 # Get future releases and find applicable ones
                 future_releases_data = await self.vcf_client.api_request(f"/v1/releases/domains/{domain.id}/future-releases")
-                applicable_releases = domain.find_applicable_releases(future_releases_data.get("elements", []))
+                future_releases = future_releases_data.get("elements", [])
+                _LOGGER.debug(f"Domain {domain.name}: Retrieved {len(future_releases)} future releases")
+                
+                applicable_releases = domain.find_applicable_releases(future_releases)
+                _LOGGER.info(f"Domain {domain.name}: Found {len(applicable_releases)} applicable releases")
                 
                 if applicable_releases:
                     applicable_releases.sort(key=lambda x: version_tuple(x.get("version", "0.0.0.0")))
