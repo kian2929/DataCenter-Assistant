@@ -341,7 +341,7 @@ def get_coordinator(hass, config_entry):
 
     async def async_fetch_resources():
         """Fetch VCF domain resource information including capacity, clusters, and hosts."""
-        _LOGGER.debug("VCF Coordinator refreshing resource data")
+        _LOGGER.info("VCF Resource Coordinator refreshing resource data - Starting (polling every 10s)...")
         
         # Check if VCF is configured
         if not vcf_url:
@@ -368,7 +368,7 @@ def get_coordinator(hass, config_entry):
         
         try:
             # Step 1: Get Domain Information - only consider ACTIVE domains
-            _LOGGER.debug("Step 1: Getting domains (only ACTIVE)")
+            _LOGGER.debug("VCF Resource Coordinator: Step 1 - Getting domains (only ACTIVE)")
             domains_url = f"{vcf_url}/v1/domains"
             
             async with session.get(domains_url, headers=headers, ssl=False) as resp:
@@ -541,6 +541,8 @@ def get_coordinator(hass, config_entry):
                         "clusters": []
                     }
             
+            _LOGGER.info(f"VCF Resource Coordinator: Completed processing {len(active_domains)} domains with {len(domain_resources)} resource collections")
+            
             return {
                 "domains": active_domains,
                 "domain_resources": domain_resources
@@ -558,9 +560,6 @@ def get_coordinator(hass, config_entry):
         update_interval=timedelta(minutes=15),
     )
     
-    # Speichere den Coordinator global für andere Komponenten
-    hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
-    
     # Create a new coordinator for resource monitoring
     resource_coordinator = DataUpdateCoordinator(
         hass,
@@ -570,8 +569,12 @@ def get_coordinator(hass, config_entry):
         update_interval=timedelta(seconds=10),  # Update every 10 seconds as requested
     )
 
-    # Speichere den Resource Coordinator global für andere Komponenten
+    # Speichere beide Coordinator global für andere Komponenten
+    hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     hass.data.setdefault(_DOMAIN, {})["resource_coordinator"] = resource_coordinator
+    
+    _LOGGER.info(f"Created VCF coordinators - Upgrades: {coordinator.name}, Resources: {resource_coordinator.name}")
+    _LOGGER.info(f"Resource coordinator update interval: {resource_coordinator.update_interval}")
     
     return coordinator
 

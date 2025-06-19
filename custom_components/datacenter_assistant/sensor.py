@@ -35,6 +35,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
         except Exception as e:
             _LOGGER.warning("VCF coordinator first refresh failed: %s", e)
 
+        # Get the resource coordinator that was created in get_coordinator
+        resource_coordinator = hass.data.get(_DOMAIN, {}).get("resource_coordinator")
+        if resource_coordinator:
+            try:
+                await resource_coordinator.async_config_entry_first_refresh()
+                _LOGGER.info("VCF resource coordinator started successfully")
+            except Exception as e:
+                _LOGGER.warning("VCF resource coordinator first refresh failed: %s", e)
+        else:
+            _LOGGER.error("Resource coordinator not found - this may cause issues with resource monitoring")
+
         # Create overall status sensors first
         entities.extend([
             VCFOverallStatusSensor(coordinator),
@@ -53,17 +64,53 @@ async def async_setup_entry(hass, entry, async_add_entities):
         # Keep track of existing domain entities to avoid duplicates
         existing_domain_entities = set()
         existing_resource_entities = set()
-
-        # Initialize resource coordinator
-        resource_coordinator = get_resource_coordinator(hass, entry)
-        if resource_coordinator:
-            try:
-                await resource_coordinator.async_config_entry_first_refresh()
-            except Exception as e:
-                _LOGGER.warning("VCF resource coordinator first refresh failed: %s", e)
-            
-            # Store resource coordinator
-            hass.data.setdefault(_DOMAIN, {})["resource_coordinator"] = resource_coordinator
+        
+        async def _resource_update_listener():
+            """Listen for resource coordinator updates and create resource entities."""
+            if resource_coordinator and resource_coordinator.data and "domain_resources" in resource_coordinator.data:
+                new_entities = []
+                domain_resources = resource_coordinator.data.get("domain_resources", {})
+                
+                for domain_id, domain_data in domain_resources.items():
+                    domain_key = f"{domain_id}_resources"
+                    if domain_key in existing_resource_entities:
+                        continue
+                        
+                    domain_name = domain_data.get("domain_name", "Unknown")
+                    domain_prefix = domain_data.get("domain_prefix", f"domain{len(existing_resource_entities) + 1}")
+                    
+                    _LOGGER.info(f"Creating resource entities for domain: {domain_name} with prefix: {domain_prefix}")
+                    
+                    # Create domain capacity sensors
+                    for resource_type in ["cpu", "memory", "storage"]:
+                        new_entities.append(
+                            VCFDomainCapacitySensor(resource_coordinator, domain_id, domain_name, domain_prefix, resource_type)
+                        )
+                    
+                    # Create cluster host count sensors
+                    clusters = domain_data.get("clusters", [])
+                    for cluster in clusters:
+                        cluster_id = cluster.get("id")
+                        cluster_name = cluster.get("name", "Unknown")
+                        new_entities.append(
+                            VCFClusterHostCountSensor(resource_coordinator, domain_id, domain_name, domain_prefix, cluster_id, cluster_name)
+                        )
+                        
+                        # Create host resource sensors
+                        hosts = cluster.get("hosts", [])
+                        for host in hosts:
+                            host_id = host.get("id")
+                            hostname = host.get("hostname", "Unknown")
+                            for resource_type in ["cpu", "memory", "storage"]:
+                                new_entities.append(
+                                    VCFHostResourceSensor(resource_coordinator, domain_id, domain_name, domain_prefix, host_id, hostname, resource_type)
+                                )
+                    
+                    existing_resource_entities.add(domain_key)
+                
+                if new_entities:
+                    _LOGGER.info(f"Adding {len(new_entities)} resource entities")
+                    async_add_entities(new_entities, True)
         
         async def _coordinator_update_listener():
             """Listen for coordinator updates and create entities for new domains."""
@@ -151,7 +198,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         
         def _resource_coordinator_update_callback():
             """Synchronous callback for resource coordinator updates that schedules entity creation."""
-            hass.async_create_task(_resource_coordinator_update_listener())
+            hass.async_create_task(_resource_update_listener())
         
         # Add listener for coordinator updates
         coordinator.async_add_listener(_coordinator_update_callback)
@@ -193,7 +240,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             """Add resource-specific entities after data is available."""
             if resource_coordinator:
                 await resource_coordinator.async_request_refresh()  # Ensure we have fresh data
-                await _resource_coordinator_update_listener()
+                await _resource_update_listener()
         
         # Delay entity creation slightly to allow coordinator refresh to complete
         hass.loop.call_later(2.0, lambda: hass.async_create_task(_add_domain_entities()))
