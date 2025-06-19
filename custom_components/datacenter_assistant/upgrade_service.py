@@ -338,6 +338,10 @@ class VCFUpgradeService:
             
             for resource_data in initial_resources_data:
                 resource_type = resource_data["resourceType"]
+
+                if resource_type == "CLUSTER":
+                    resource_type = "HOST"
+
                 target_resource_version = bom_map.get(resource_type)
                 
                 _LOGGER.debug(f"Domain {domain_id}: Resource {resource_type} -> Target version: {target_resource_version}")
