@@ -5,6 +5,6 @@
     "integration_type": "integration",
     "country": "de",
     "render_readme": true,
-    "iot_class": "Local Polling"
+    "iot_class": "Local Polling",
+    "logo": "logo.png"
 }
-  
