@@ -81,10 +81,16 @@ class VCFSensorSetupManager:
         """Setup dynamic entity creation."""
         # Set up listeners for dynamic entity creation
         def coordinator_update_callback():
-            self.hass.async_create_task(self._create_domain_entities(coordinator))
+            # Schedule task on event loop (thread-safe)
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self._create_domain_entities(coordinator))
+            )
         
         def resource_coordinator_update_callback():
-            self.hass.async_create_task(self._create_resource_entities(resource_coordinator))
+            # Schedule task on event loop (thread-safe)
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self._create_resource_entities(resource_coordinator))
+            )
 
         # Add listeners
         coordinator.async_add_listener(coordinator_update_callback)

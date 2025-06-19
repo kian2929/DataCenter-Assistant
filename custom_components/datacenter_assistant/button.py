@@ -77,7 +77,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     # Add listener for coordinator updates
     def coordinator_update_callback():
-        hass.async_create_task(create_domain_buttons())
+        # Schedule task on event loop (thread-safe)
+        hass.loop.call_soon_threadsafe(
+            lambda: hass.async_create_task(create_domain_buttons())
+        )
     
     coordinator.async_add_listener(coordinator_update_callback)
     

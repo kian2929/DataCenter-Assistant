@@ -43,11 +43,19 @@ class VCFUpgradeService:
         self._upgrade_states[domain_id]["status"] = status
         _LOGGER.info(f"Domain {domain_id} upgrade status changed to: {status}")
         
-        # Fire event for Home Assistant to update sensors
-        self.hass.bus.fire(
-            "vcf_upgrade_status_changed",
-            {"domain_id": domain_id, "status": status}
-        )
+        # Fire event for Home Assistant to update sensors (thread-safe)
+        def fire_status_event():
+            self.hass.bus.fire(
+                "vcf_upgrade_status_changed",
+                {"domain_id": domain_id, "status": status}
+            )
+        
+        if hasattr(self.hass, 'loop') and self.hass.loop.is_running():
+            # If called from a background thread, schedule on event loop
+            self.hass.loop.call_soon_threadsafe(fire_status_event)
+        else:
+            # Already on main thread or loop not running
+            fire_status_event()
     
     def set_upgrade_logs(self, domain_id: str, logs: str):
         """Set upgrade logs for a domain."""
@@ -56,11 +64,19 @@ class VCFUpgradeService:
         self._upgrade_states[domain_id]["logs"] = logs
         _LOGGER.debug(f"Domain {domain_id} upgrade logs updated")
         
-        # Fire event for Home Assistant to update sensors
-        self.hass.bus.fire(
-            "vcf_upgrade_logs_changed",
-            {"domain_id": domain_id, "logs": logs[:255]}  # Truncate for event
-        )
+        # Fire event for Home Assistant to update sensors (thread-safe)
+        def fire_logs_event():
+            self.hass.bus.fire(
+                "vcf_upgrade_logs_changed",
+                {"domain_id": domain_id, "logs": logs[:255]}  # Truncate for event
+            )
+        
+        if hasattr(self.hass, 'loop') and self.hass.loop.is_running():
+            # If called from a background thread, schedule on event loop
+            self.hass.loop.call_soon_threadsafe(fire_logs_event)
+        else:
+            # Already on main thread or loop not running
+            fire_logs_event()
     
     async def start_upgrade(self, domain_id: str, domain_data: Dict[str, Any]) -> bool:
         """Start upgrade process for a domain."""

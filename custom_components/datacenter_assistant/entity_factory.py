@@ -301,8 +301,10 @@ class VCFDomainUpgradeStatusSensor(VCFDomainBaseSensor):
     def _handle_upgrade_status_change(self, event):
         """Handle upgrade status change events."""
         if event.data.get("domain_id") == self._domain_id:
-            # Schedule update on the Home Assistant event loop
-            self.hass.async_create_task(self._async_update_state())
+            # Schedule update on the Home Assistant event loop (thread-safe)
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self._async_update_state())
+            )
     
     async def _async_update_state(self):
         """Async method to update entity state."""
@@ -396,8 +398,10 @@ class VCFDomainUpgradeLogsSensor(VCFDomainBaseSensor):
     def _handle_upgrade_logs_change(self, event):
         """Handle upgrade logs change events."""
         if event.data.get("domain_id") == self._domain_id:
-            # Schedule update on the Home Assistant event loop
-            self.hass.async_create_task(self._async_update_logs_state())
+            # Schedule update on the Home Assistant event loop (thread-safe)
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self._async_update_logs_state())
+            )
     
     async def _async_update_logs_state(self):
         """Async method to update entity state."""
