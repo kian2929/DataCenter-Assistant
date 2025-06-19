@@ -6,7 +6,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import aiohttp
 from aiohttp import ClientError
 import asyncio
-from .coordinator import get_coordinator
+from .coordinator import get_coordinator, get_resource_coordinator
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,18 @@ async def async_setup_entry(hass, entry, async_add_entities):
         
         # Keep track of existing domain entities to avoid duplicates
         existing_domain_entities = set()
+        existing_resource_entities = set()
+
+        # Initialize resource coordinator
+        resource_coordinator = get_resource_coordinator(hass, entry)
+        if resource_coordinator:
+            try:
+                await resource_coordinator.async_config_entry_first_refresh()
+            except Exception as e:
+                _LOGGER.warning("VCF resource coordinator first refresh failed: %s", e)
+            
+            # Store resource coordinator
+            hass.data.setdefault(_DOMAIN, {})["resource_coordinator"] = resource_coordinator
         
         async def _coordinator_update_listener():
             """Listen for coordinator updates and create entities for new domains."""
@@ -76,13 +88,77 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 if new_entities:
                     _LOGGER.info(f"Adding {len(new_entities)} entities for newly discovered domains")
                     async_add_entities(new_entities, True)
+
+        async def _resource_coordinator_update_listener():
+            """Listen for resource coordinator updates and create entities for new resources."""
+            if resource_coordinator and resource_coordinator.data and "domain_resources" in resource_coordinator.data:
+                new_entities = []
+                domain_resources = resource_coordinator.data["domain_resources"]
+                
+                for domain_id, domain_data in domain_resources.items():
+                    domain_name = domain_data.get("domain_name", "Unknown")
+                    domain_prefix = domain_data.get("domain_prefix", f"domain{len(existing_resource_entities) + 1}")
+                    
+                    # Create domain capacity sensors
+                    domain_key = f"{domain_id}_capacity"
+                    if domain_key not in existing_resource_entities:
+                        capacity = domain_data.get("capacity", {})
+                        if capacity:
+                            # Create capacity sensors for CPU, Memory, Storage
+                            new_entities.extend([
+                                VCFDomainCapacitySensor(resource_coordinator, domain_id, domain_name, domain_prefix, "cpu"),
+                                VCFDomainCapacitySensor(resource_coordinator, domain_id, domain_name, domain_prefix, "memory"),
+                                VCFDomainCapacitySensor(resource_coordinator, domain_id, domain_name, domain_prefix, "storage")
+                            ])
+                        existing_resource_entities.add(domain_key)
+                    
+                    # Create cluster host count sensors
+                    clusters = domain_data.get("clusters", [])
+                    for cluster in clusters:
+                        cluster_id = cluster.get("id")
+                        cluster_name = cluster.get("name", "Unknown")
+                        cluster_key = f"{domain_id}_{cluster_id}_hostcount"
+                        
+                        if cluster_key not in existing_resource_entities:
+                            new_entities.append(
+                                VCFClusterHostCountSensor(resource_coordinator, domain_id, domain_name, domain_prefix, cluster_id, cluster_name)
+                            )
+                            existing_resource_entities.add(cluster_key)
+                        
+                        # Create host resource sensors
+                        hosts = cluster.get("hosts", [])
+                        for host in hosts:
+                            host_id = host.get("id")
+                            hostname = host.get("hostname", "Unknown")
+                            
+                            # Create sensors for CPU, Memory, Storage for each host
+                            for resource_type in ["cpu", "memory", "storage"]:
+                                host_key = f"{domain_id}_{host_id}_{resource_type}"
+                                if host_key not in existing_resource_entities:
+                                    new_entities.append(
+                                        VCFHostResourceSensor(resource_coordinator, domain_id, domain_name, domain_prefix, 
+                                                             host_id, hostname, resource_type)
+                                    )
+                                    existing_resource_entities.add(host_key)
+                
+                if new_entities:
+                    _LOGGER.info(f"Adding {len(new_entities)} resource entities")
+                    async_add_entities(new_entities, True)
         
         def _coordinator_update_callback():
             """Synchronous callback for coordinator updates that schedules entity creation."""
             hass.async_create_task(_coordinator_update_listener())
         
+        def _resource_coordinator_update_callback():
+            """Synchronous callback for resource coordinator updates that schedules entity creation."""
+            hass.async_create_task(_resource_coordinator_update_listener())
+        
         # Add listener for coordinator updates
         coordinator.async_add_listener(_coordinator_update_callback)
+        
+        # Add listener for resource coordinator updates
+        if resource_coordinator:
+            resource_coordinator.async_add_listener(_resource_coordinator_update_callback)
         
         # Schedule domain-specific entity creation after coordinator data is available
         async def _add_domain_entities():
@@ -112,9 +188,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     _LOGGER.warning("No domain-specific entities to create")
             else:
                 _LOGGER.warning("No domain update data available for entity creation")
+
+        async def _add_resource_entities():
+            """Add resource-specific entities after data is available."""
+            if resource_coordinator:
+                await resource_coordinator.async_request_refresh()  # Ensure we have fresh data
+                await _resource_coordinator_update_listener()
         
         # Delay entity creation slightly to allow coordinator refresh to complete
         hass.loop.call_later(2.0, lambda: hass.async_create_task(_add_domain_entities()))
+        hass.loop.call_later(3.0, lambda: hass.async_create_task(_add_resource_entities()))
 
     except Exception as e:
         _LOGGER.error("VCF sensors could not be initialized: %s", e)
@@ -326,5 +409,299 @@ class VCFDomainUpdateStatusSensor(CoordinatorEntity, SensorEntity):
             
         except Exception as e:
             _LOGGER.error(f"Error getting domain {self._domain_name} attributes: {e}")
+            return {"error": str(e)}
+
+
+class VCFDomainCapacitySensor(CoordinatorEntity, SensorEntity):
+    """Sensor for domain capacity (CPU, Memory, Storage)."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix, resource_type):
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix
+        self._resource_type = resource_type
+        
+        # Create entity name and unique ID
+        safe_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} {resource_type.upper()}"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_name}_{resource_type}"
+
+    @property
+    def icon(self):
+        if self._resource_type == "cpu":
+            return "mdi:cpu-64-bit"
+        elif self._resource_type == "memory":
+            return "mdi:memory"
+        elif self._resource_type == "storage":
+            return "mdi:harddisk"
+        else:
+            return "mdi:server"
+
+    @property
+    def state(self):
+        """Return the usage percentage for this resource."""
+        try:
+            domain_resources = self.coordinator.data.get("domain_resources", {})
+            domain_data = domain_resources.get(self._domain_id, {})
+            capacity = domain_data.get("capacity", {})
+            resource_info = capacity.get(self._resource_type, {})
+            
+            if self._resource_type == "cpu":
+                used = resource_info.get("used", {}).get("value", 0)
+                total = resource_info.get("total", {}).get("value", 0)
+            elif self._resource_type == "memory":
+                used = resource_info.get("used", {}).get("value", 0)
+                total = resource_info.get("total", {}).get("value", 0)
+            elif self._resource_type == "storage":
+                used = resource_info.get("used", {}).get("value", 0)
+                total = resource_info.get("total", {}).get("value", 0)
+            else:
+                return 0
+            
+            if total > 0:
+                return round((used / total) * 100, 2)
+            return 0
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting capacity for {self._domain_name} {self._resource_type}: {e}")
+            return 0
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "%"
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        try:
+            domain_resources = self.coordinator.data.get("domain_resources", {})
+            domain_data = domain_resources.get(self._domain_id, {})
+            capacity = domain_data.get("capacity", {})
+            resource_info = capacity.get(self._resource_type, {})
+            
+            attributes = {
+                "domain": self._domain_name,
+                "domain_prefix": self._domain_prefix,
+                "resource_type": self._resource_type
+            }
+            
+            if self._resource_type == "cpu":
+                used = resource_info.get("used", {})
+                total = resource_info.get("total", {})
+                attributes.update({
+                    "used_value": used.get("value", 0),
+                    "used_unit": used.get("unit", "GHz"),
+                    "total_value": total.get("value", 0),
+                    "total_unit": total.get("unit", "GHz"),
+                    "number_of_cores": resource_info.get("numberOfCores", 0)
+                })
+            elif self._resource_type in ["memory", "storage"]:
+                used = resource_info.get("used", {})
+                total = resource_info.get("total", {})
+                attributes.update({
+                    "used_value": used.get("value", 0),
+                    "used_unit": used.get("unit", "GB"),
+                    "total_value": total.get("value", 0),
+                    "total_unit": total.get("unit", "GB")
+                })
+            
+            return attributes
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting capacity attributes for {self._domain_name} {self._resource_type}: {e}")
+            return {"error": str(e)}
+
+
+class VCFClusterHostCountSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for cluster host count."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix, cluster_id, cluster_name):
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix
+        self._cluster_id = cluster_id
+        self._cluster_name = cluster_name
+        
+        # Create entity name and unique ID
+        safe_domain_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        safe_cluster_name = cluster_name.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} {cluster_name} host count"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_domain_name}_{safe_cluster_name}_host_count"
+        self._attr_icon = "mdi:server-network"
+
+    @property
+    def state(self):
+        """Return the host count for this cluster."""
+        try:
+            domain_resources = self.coordinator.data.get("domain_resources", {})
+            domain_data = domain_resources.get(self._domain_id, {})
+            clusters = domain_data.get("clusters", [])
+            
+            for cluster in clusters:
+                if cluster.get("id") == self._cluster_id:
+                    return cluster.get("host_count", 0)
+            
+            return 0
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting host count for cluster {self._cluster_name}: {e}")
+            return 0
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        try:
+            domain_resources = self.coordinator.data.get("domain_resources", {})
+            domain_data = domain_resources.get(self._domain_id, {})
+            clusters = domain_data.get("clusters", [])
+            
+            attributes = {
+                "domain": self._domain_name,
+                "domain_prefix": self._domain_prefix,
+                "cluster_name": self._cluster_name,
+                "cluster_id": self._cluster_id
+            }
+            
+            for cluster in clusters:
+                if cluster.get("id") == self._cluster_id:
+                    hosts = cluster.get("hosts", [])
+                    host_list = []
+                    for host in hosts:
+                        host_list.append({
+                            "hostname": host.get("hostname", "Unknown"),
+                            "fqdn": host.get("fqdn", "Unknown"),
+                            "id": host.get("id", "Unknown")
+                        })
+                    attributes["hosts"] = host_list
+                    break
+            
+            return attributes
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting cluster attributes for {self._cluster_name}: {e}")
+            return {"error": str(e)}
+
+
+class VCFHostResourceSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for host resource usage (CPU, Memory, Storage)."""
+    
+    def __init__(self, coordinator, domain_id, domain_name, domain_prefix, host_id, hostname, resource_type):
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self._domain_id = domain_id
+        self._domain_name = domain_name
+        self._domain_prefix = domain_prefix
+        self._host_id = host_id
+        self._hostname = hostname
+        self._resource_type = resource_type
+        
+        # Create entity name and unique ID
+        safe_domain_name = domain_name.lower().replace(' ', '_').replace('-', '_')
+        safe_hostname = hostname.lower().replace(' ', '_').replace('-', '_')
+        self._attr_name = f"VCF {self._domain_prefix} {hostname} {resource_type.upper()}"
+        self._attr_unique_id = f"vcf_{self._domain_prefix}_{safe_domain_name}_{safe_hostname}_{resource_type}"
+
+    @property
+    def icon(self):
+        if self._resource_type == "cpu":
+            return "mdi:cpu-64-bit"
+        elif self._resource_type == "memory":
+            return "mdi:memory"
+        elif self._resource_type == "storage":
+            return "mdi:harddisk"
+        else:
+            return "mdi:server"
+
+    @property
+    def state(self):
+        """Return the usage percentage for this host resource."""
+        try:
+            domain_resources = self.coordinator.data.get("domain_resources", {})
+            domain_data = domain_resources.get(self._domain_id, {})
+            clusters = domain_data.get("clusters", [])
+            
+            # Find the host in the clusters
+            for cluster in clusters:
+                hosts = cluster.get("hosts", [])
+                for host in hosts:
+                    if host.get("id") == self._host_id:
+                        resource_info = host.get(self._resource_type, {})
+                        
+                        if self._resource_type == "cpu":
+                            used = resource_info.get("used_mhz", 0)
+                            total = resource_info.get("total_mhz", 0)
+                        elif self._resource_type in ["memory", "storage"]:
+                            used = resource_info.get("used_mb", 0)
+                            total = resource_info.get("total_mb", 0)
+                        else:
+                            return 0
+                        
+                        if total > 0:
+                            return round((used / total) * 100, 2)
+                        return 0
+            
+            return 0
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting {self._resource_type} usage for host {self._hostname}: {e}")
+            return 0
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "%"
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        try:
+            domain_resources = self.coordinator.data.get("domain_resources", {})
+            domain_data = domain_resources.get(self._domain_id, {})
+            clusters = domain_data.get("clusters", [])
+            
+            attributes = {
+                "domain": self._domain_name,
+                "domain_prefix": self._domain_prefix,
+                "hostname": self._hostname,
+                "host_id": self._host_id,
+                "resource_type": self._resource_type
+            }
+            
+            # Find the host in the clusters
+            for cluster in clusters:
+                hosts = cluster.get("hosts", [])
+                for host in hosts:
+                    if host.get("id") == self._host_id:
+                        resource_info = host.get(self._resource_type, {})
+                        attributes["fqdn"] = host.get("fqdn", "Unknown")
+                        
+                        if self._resource_type == "cpu":
+                            attributes.update({
+                                "used_mhz": resource_info.get("used_mhz", 0),
+                                "total_mhz": resource_info.get("total_mhz", 0),
+                                "cores": resource_info.get("cores", 0)
+                            })
+                        elif self._resource_type in ["memory", "storage"]:
+                            used_mb = resource_info.get("used_mb", 0)
+                            total_mb = resource_info.get("total_mb", 0)
+                            attributes.update({
+                                "used_mb": used_mb,
+                                "total_mb": total_mb,
+                                "used_gb": round(used_mb / 1024, 2) if used_mb > 0 else 0,
+                                "total_gb": round(total_mb / 1024, 2) if total_mb > 0 else 0
+                            })
+                        break
+                if attributes.get("fqdn"):  # If we found the host, break outer loop too
+                    break
+            
+            return attributes
+            
+        except Exception as e:
+            _LOGGER.error(f"Error getting {self._resource_type} attributes for host {self._hostname}: {e}")
             return {"error": str(e)}
 

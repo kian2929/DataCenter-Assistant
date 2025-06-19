@@ -339,6 +339,217 @@ def get_coordinator(hass, config_entry):
             _LOGGER.error(f"Error in VCF update check workflow: {e}")
             return {"domains": [], "domain_updates": {}, "error": str(e)}
 
+    async def async_fetch_resources():
+        """Fetch VCF domain resource information including capacity, clusters, and hosts."""
+        _LOGGER.debug("VCF Coordinator refreshing resource data")
+        
+        # Check if VCF is configured
+        if not vcf_url:
+            _LOGGER.warning("VCF not configured with URL")
+            return {"domains": [], "domain_resources": {}}
+
+        current_token = config_entry.data.get("vcf_token")
+        current_expiry = config_entry.data.get("token_expiry", 0)
+        
+        # Check if token expires in less than 10 minutes
+        if current_expiry > 0 and time.time() > current_expiry - 600:
+            _LOGGER.info("VCF token will expire soon, refreshing proactively")
+            new_token = await refresh_vcf_token()
+            if new_token:
+                current_token = new_token
+            else:
+                _LOGGER.warning("Failed to refresh token proactively")
+        
+        session = async_get_clientsession(hass)
+        headers = {
+            "Authorization": f"Bearer {current_token}",
+            "Accept": "application/json"
+        }
+        
+        try:
+            # Step 1: Get Domain Information - only consider ACTIVE domains
+            _LOGGER.debug("Step 1: Getting domains (only ACTIVE)")
+            domains_url = f"{vcf_url}/v1/domains"
+            
+            async with session.get(domains_url, headers=headers, ssl=False) as resp:
+                if resp.status == 401:
+                    _LOGGER.info("Token expired, refreshing...")
+                    new_token = await refresh_vcf_token()
+                    if new_token:
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        current_token = new_token
+                    else:
+                        raise aiohttp.ClientError("Failed to refresh token")
+                        
+                    # Retry with new token
+                    async with session.get(domains_url, headers=headers, ssl=False) as retry_resp:
+                        if retry_resp.status != 200:
+                            raise aiohttp.ClientError(f"Domains API failed: {retry_resp.status}")
+                        domains_data = await retry_resp.json()
+                elif resp.status != 200:
+                    raise aiohttp.ClientError(f"Domains API failed: {resp.status}")
+                else:
+                    domains_data = await resp.json()
+            
+            # Extract active domains with prefixed variables
+            active_domains = []
+            domain_counter = 1
+            domain_elements = domains_data.get("elements", [])
+            
+            for domain in domain_elements:
+                if domain.get("status") == "ACTIVE":
+                    domain_info = {
+                        "id": domain.get("id"),
+                        "name": domain.get("name"),
+                        "status": domain.get("status"),
+                        "prefix": f"domain{domain_counter}"
+                    }
+                    active_domains.append(domain_info)
+                    _LOGGER.debug(f"Found active domain{domain_counter}_: {domain.get('name')} ({domain.get('id')})")
+                    domain_counter += 1
+            
+            if not active_domains:
+                _LOGGER.warning("No active domains found - failing setup")
+                return {"domains": [], "domain_resources": {}, "setup_failed": True}
+            
+            # Step 2: For each domain, get detailed resource information
+            _LOGGER.debug("Step 2: Getting resource information for each domain")
+            domain_resources = {}
+            
+            for domain in active_domains:
+                domain_id = domain["id"]
+                domain_name = domain["name"]
+                prefix = domain["prefix"]
+                
+                try:
+                    # Get domain details with capacity information
+                    _LOGGER.debug(f"Getting domain details for {domain_name}")
+                    domain_details_url = f"{vcf_url}/v1/domains/{domain_id}"
+                    
+                    async with session.get(domain_details_url, headers=headers, ssl=False) as resp:
+                        if resp.status != 200:
+                            _LOGGER.warning(f"Failed to get domain details for {domain_name}: {resp.status}")
+                            continue
+                        domain_details = await resp.json()
+                    
+                    # Extract capacity information
+                    capacity = domain_details.get("capacity", {})
+                    clusters_info = domain_details.get("clusters", [])
+                    
+                    # Initialize domain resource data
+                    domain_resource_data = {
+                        "domain_name": domain_name,
+                        "domain_prefix": prefix,
+                        "capacity": capacity,
+                        "clusters": []
+                    }
+                    
+                    # Step 3: For each cluster, get cluster details and host information
+                    for cluster_ref in clusters_info:
+                        cluster_id = cluster_ref.get("id")
+                        if not cluster_id:
+                            continue
+                            
+                        try:
+                            # Get cluster details
+                            _LOGGER.debug(f"Getting cluster details for cluster {cluster_id}")
+                            cluster_details_url = f"{vcf_url}/v1/clusters/{cluster_id}"
+                            
+                            async with session.get(cluster_details_url, headers=headers, ssl=False) as resp:
+                                if resp.status != 200:
+                                    _LOGGER.warning(f"Failed to get cluster details for {cluster_id}: {resp.status}")
+                                    continue
+                                cluster_details = await resp.json()
+                            
+                            cluster_name = cluster_details.get("name", "Unknown")
+                            hosts_info = cluster_details.get("hosts", [])
+                            
+                            cluster_data = {
+                                "id": cluster_id,
+                                "name": cluster_name,
+                                "host_count": len(hosts_info),
+                                "hosts": []
+                            }
+                            
+                            # Step 4: For each host, get host details
+                            for host_ref in hosts_info:
+                                host_id = host_ref.get("id")
+                                if not host_id:
+                                    continue
+                                    
+                                try:
+                                    # Get host details
+                                    _LOGGER.debug(f"Getting host details for host {host_id}")
+                                    host_details_url = f"{vcf_url}/v1/hosts/{host_id}"
+                                    
+                                    async with session.get(host_details_url, headers=headers, ssl=False) as resp:
+                                        if resp.status != 200:
+                                            _LOGGER.warning(f"Failed to get host details for {host_id}: {resp.status}")
+                                            continue
+                                        host_details = await resp.json()
+                                    
+                                    # Extract hostname from FQDN
+                                    fqdn = host_details.get("fqdn", "")
+                                    hostname = fqdn.split(".")[0] if fqdn else "Unknown"
+                                    
+                                    # Extract resource information
+                                    cpu_info = host_details.get("cpu", {})
+                                    memory_info = host_details.get("memory", {})
+                                    storage_info = host_details.get("storage", {})
+                                    
+                                    host_data = {
+                                        "id": host_id,
+                                        "fqdn": fqdn,
+                                        "hostname": hostname,
+                                        "cpu": {
+                                            "used_mhz": cpu_info.get("usedFrequencyMHz", 0),
+                                            "total_mhz": cpu_info.get("frequencyMHz", 0),
+                                            "cores": cpu_info.get("cores", 0)
+                                        },
+                                        "memory": {
+                                            "used_mb": memory_info.get("usedCapacityMB", 0),
+                                            "total_mb": memory_info.get("totalCapacityMB", 0)
+                                        },
+                                        "storage": {
+                                            "used_mb": storage_info.get("usedCapacityMB", 0),
+                                            "total_mb": storage_info.get("totalCapacityMB", 0)
+                                        }
+                                    }
+                                    
+                                    cluster_data["hosts"].append(host_data)
+                                    
+                                except Exception as e:
+                                    _LOGGER.error(f"Error getting host details for {host_id}: {e}")
+                                    continue
+                            
+                            domain_resource_data["clusters"].append(cluster_data)
+                            
+                        except Exception as e:
+                            _LOGGER.error(f"Error getting cluster details for {cluster_id}: {e}")
+                            continue
+                    
+                    domain_resources[domain_id] = domain_resource_data
+                    _LOGGER.info(f"Completed resource collection for domain {domain_name}")
+                    
+                except Exception as e:
+                    _LOGGER.error(f"Error getting resource information for domain {domain_name}: {e}")
+                    domain_resources[domain_id] = {
+                        "domain_name": domain_name,
+                        "domain_prefix": prefix,
+                        "error": str(e),
+                        "capacity": {},
+                        "clusters": []
+                    }
+            
+            return {
+                "domains": active_domains,
+                "domain_resources": domain_resources
+            }
+            
+        except Exception as e:
+            _LOGGER.error(f"Error in VCF resource collection workflow: {e}")
+            return {"domains": [], "domain_resources": {}, "error": str(e)}
+
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
@@ -350,4 +561,21 @@ def get_coordinator(hass, config_entry):
     # Speichere den Coordinator global für andere Komponenten
     hass.data.setdefault(_DOMAIN, {})["coordinator"] = coordinator
     
+    # Create a new coordinator for resource monitoring
+    resource_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        name="VCF Resources",
+        update_method=async_fetch_resources,
+        update_interval=timedelta(seconds=10),  # Update every 10 seconds as requested
+    )
+
+    # Speichere den Resource Coordinator global für andere Komponenten
+    hass.data.setdefault(_DOMAIN, {})["resource_coordinator"] = resource_coordinator
+    
     return coordinator
+
+def get_resource_coordinator(hass, config_entry):
+    """Get the resource data update coordinator."""
+    # The resource coordinator is created and stored when get_coordinator is called
+    return hass.data.get(_DOMAIN, {}).get("resource_coordinator")
