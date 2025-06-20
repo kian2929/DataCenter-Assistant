@@ -150,8 +150,7 @@ class VCFUpgradeService:
             _LOGGER.info(f"Domain {domain_id}: Upgrade workflow completed successfully!")
             self.set_upgrade_status(domain_id, "successfully_completed")
             self.set_upgrade_logs(domain_id, "**Upgrade Completed Successfully**\n\nVCF upgrade completed successfully!")
-            
-            # Reset to waiting state after a delay
+              # Reset to waiting state after a delay
             _LOGGER.info(f"Domain {domain_id}: Resetting upgrade status to waiting after 10 seconds")
             await asyncio.sleep(10)
             self.set_upgrade_status(domain_id, "waiting_for_initiation")
@@ -780,8 +779,7 @@ Waiting for acknowledgement..."""
                         _LOGGER.error(f"Domain {domain_id}: Failed to upgrade component {component_name} ({component_type}): {e}")
                         # Continue with other upgrades even if one fails
                         continue
-                    
-                    # Wait a bit before processing next upgrade
+                      # Wait a bit before processing next upgrade
                     _LOGGER.debug(f"Domain {domain_id}: Waiting 10 seconds before next upgrade...")
                     await asyncio.sleep(10)
                 
@@ -792,9 +790,8 @@ Waiting for acknowledgement..."""
                     _LOGGER.info(f"Domain {domain_id}: No non-HOST upgrades processed this cycle")
                     
                     # Check if we should continue or exit
-                    if processed_count == 0:
-                        # Nothing processed at all - wait and try again
-                        _LOGGER.info(f"Domain {domain_id}: No upgrades processed at all, waiting 60 seconds...")
+                    if processed_count == 0:                        # Nothing processed at all - wait and try again
+                        _LOGGER.info(f"Domain {domain_id}: No upgrades processed at all, waiting 1 minute...")
                         await asyncio.sleep(60)
                     else:
                         # Only HOST upgrades were found - exit the loop since we don't process them
@@ -808,7 +805,7 @@ Waiting for acknowledgement..."""
         """Upgrade SDDC Manager."""
         _LOGGER.info(f"Domain {domain_id}: Starting SDDC Manager upgrade with bundle {bundle_id}")
         self.set_upgrade_status(domain_id, "upgrading_sddcmanager")
-        self.set_upgrade_logs(domain_id, "**Upgrading SDDC Manager**\n\nUpgrading SDDC Manager. This may take up to 1 hour...")
+        self.set_upgrade_logs(domain_id, "**Upgrading SDDC Manager**\n\nUpgrading SDDC Manager. This may take up to 2 hours...")
         
         try:
             upgrade_data = {
@@ -887,8 +884,7 @@ Waiting for acknowledgement..."""
                     if api_available:
                         _LOGGER.info(f"Domain {domain_id}: API became unavailable during SDDC Manager upgrade (expected): {api_error}")
                         api_available = False
-                    
-                    # Periodically test if API is back online (every 5 minutes)
+                      # Periodically test if API is back online (every 5 minutes)
                     current_time = check_count * 30  # 30 seconds per check
                     if current_time - last_connectivity_check >= 300:  # 5 minutes
                         try:
@@ -908,10 +904,9 @@ Waiting for acknowledgement..."""
                                 self.hass.loop.call_soon_threadsafe(fire_api_restored_event)
                             else:
                                 fire_api_restored_event()
-                            
-                            # Wait additional 5 minutes for SDDC Manager to fully stabilize
-                            _LOGGER.info(f"Domain {domain_id}: Waiting 5 minutes for SDDC Manager to fully stabilize...")
-                            await asyncio.sleep(300)
+                              # Wait additional 6 minutes for SDDC Manager to fully stabilize
+                            _LOGGER.info(f"Domain {domain_id}: Waiting 6 minutes for SDDC Manager to fully stabilize...")
+                            await asyncio.sleep(360)
                             break
                         except Exception as test_error:
                             _LOGGER.debug(f"Domain {domain_id}: API still not available: {test_error}")
@@ -940,7 +935,7 @@ Waiting for acknowledgement..."""
     async def _upgrade_nsx(self, domain_id: str, bundle_id: str):
         """Upgrade NSX-T Manager."""
         self.set_upgrade_status(domain_id, "upgrading_nsx")
-        self.set_upgrade_logs(domain_id, "**Upgrading NSX-T**\n\nUpgrading NSX-T Manager. This may take up to 3 hours...")
+        self.set_upgrade_logs(domain_id, "**Upgrading NSX-T**\n\nUpgrading NSX-T Manager. This may take up to 4 hours...")
         
         try:
             # Get NSX resources

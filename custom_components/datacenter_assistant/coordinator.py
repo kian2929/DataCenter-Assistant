@@ -26,7 +26,7 @@ class VCFCoordinatorManager:
         self._last_successful_resource_data = None
         self._api_outage_start_time = None
         self._is_sddc_upgrade_in_progress = False
-        self._outage_timeout = 3600  # 1 hour timeout for SDDC Manager upgrades
+        self._outage_timeout = 7200  # 2 hour timeout for SDDC Manager upgrades
         
         # Set up event listeners for API outage notifications
         self._setup_api_outage_listeners()
