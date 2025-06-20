@@ -1021,7 +1021,7 @@ Waiting for acknowledgement..."""
             execution_status = validation_response.get("executionStatus")
             
             if execution_status != "COMPLETED":
-                raise Exception(f"Final validation failed with status: {execution_status}")
+                raise Exception(f"Final validation failed with status: {execution_status}. Expected 'COMPLETED'.")
             
             _LOGGER.info(f"Final validation completed successfully for domain {domain_id}")
             
