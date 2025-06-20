@@ -158,9 +158,13 @@ class VCFHostResourceBaseSensor(VCFResourceBaseSensor):
                     "cores": resource_info.get("cores", 0)
                 })
             elif self._resource_type in ["memory", "storage"]:
+                used_mb = resource_info.get("used_mb", 0)
+                total_mb = resource_info.get("total_mb", 0)
                 attributes.update({
-                    "used_mb": resource_info.get("used_mb", 0),
-                    "total_mb": resource_info.get("total_mb", 0)
+                    "used_mb": used_mb,
+                    "total_mb": total_mb,
+                    "used_gb": round(used_mb / 1024, 2) if used_mb > 0 else 0,
+                    "total_gb": round(total_mb / 1024, 2) if total_mb > 0 else 0
                 })
             
             return attributes
