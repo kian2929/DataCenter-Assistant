@@ -73,9 +73,7 @@ This automation integration was developed as a **proof of concept** for a projec
 2. Extract the `custom_components/datacenter_assistant` folder to your Home Assistant `custom_components` directory
 3. Restart Home Assistant
 
-## Configuration
-
-### Initial Setup
+## Initial Setup
 
 1. Go to **Settings** → **Devices & Services**
 2. Click **Add Integration**
@@ -84,18 +82,6 @@ This automation integration was developed as a **proof of concept** for a projec
    - **VCF URL**: Your SDDC Manager URL (e.g., `https://sddc-manager.example.com`)
    - **VCF Username**: Username for VCF API access
    - **VCF Password**: Password for VCF API access
-
-### Configuration Options
-
-The integration supports the following configuration:
-
-```yaml
-# Example configuration.yaml (if manual configuration is needed)
-datacenter_assistant:
-  vcf_url: "https://your-sddc-manager.example.com"
-  vcf_username: "your-username"
-  vcf_password: "your-password"
-```
 
 ### Upgrade Workflow
 
@@ -159,9 +145,9 @@ custom_components/datacenter_assistant/
     └── de.json
 ```
 
-## Development Methodology
+## Development Notes
 
-This integration was developed with a **thorough manual preparation** approach, where the workflow design and conceptual framework were carefully planned and documented as the **most critical foundation** of the development process. The emphasis on comprehensive upfront planning and design thinking demonstrates a methodical approach to software development that prioritizes architectural soundness and conceptual clarity.
+This integration was implemented with the assistance of AI tools (Claude Sonnet 4 Preview via GitHub Agent mode). The workflow design, conceptual framework, and prompt preparation were thoroughly done manually before implementation, which was the crucial step for the realization of the project.
 
 ## License
 
