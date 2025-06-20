@@ -9,7 +9,7 @@ A custom Home Assistant integration for monitoring and managing VMware Cloud Fou
 
 This automation integration was developed as a **proof of concept** for a project offered by **EnBW** and undertaken by students of **Hochschule Karlsruhe**.
 
-<img src=".github/images/logo.png" alt="DataCenter Assistant Logo" width="20%" style="vertical-align: middle;"> <img src=".github/images/enbw.png" alt="EnBW Logo" height="120px" style="vertical-align: middle;"> <img src=".github/images/hka.png" alt="Hochschule Karlsruhe Logo" height="192px" style="vertical-align: middle;">
+<img src=".github/images/logo.png" alt="DataCenter Assistant Logo" width="16%" style="vertical-align: middle;"> <img src=".github/images/enbw.png" alt="EnBW Logo" height="96px" style="vertical-align: middle;"> <img src=".github/images/hka.png" alt="Hochschule Karlsruhe Logo" height="154px" style="vertical-align: middle;">
 
 ## Features
 
