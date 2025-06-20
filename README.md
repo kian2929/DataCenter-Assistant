@@ -6,6 +6,10 @@
 
 A custom Home Assistant integration for monitoring and managing VMware Cloud Foundation (VCF) environments. This integration provides comprehensive monitoring of VCF domains, including update status, resource utilization, and automated upgrade workflows.
 
+## Project Background
+
+This automation integration was developed as a **proof of concept** for a project offered by **EnBW** and undertaken by students of **Hochschule Karlsruhe**.
+
 <img src="logo.png" alt="DataCenter Assistant Logo" width="20%">
 
 ## Features
@@ -104,11 +108,21 @@ The integration provides a complete automated upgrade workflow:
 5. **Component Upgrades**: Sequentially upgrades SDDC Manager, NSX, vCenter, and ESXi
 6. **Final Validation**: Validates successful upgrade completion
 
-> **⚠️ Note**: ESX host and cluster upgrade functionality is not yet implemented. The upgrade workflow currently supports SDDC Manager, NSX, and vCenter components. As a result, a VCF upgrade will never succeed in this version of the integration. **It is expected to fail, and this is acknowledged.**
-
 Monitor the upgrade process through:
 - `sensor.vcf_[domain]_upgrade_status` - Current upgrade step
 - `sensor.vcf_[domain]_upgrade_logs` - Detailed progress logs
+
+## Important Implementation Notes
+
+### Fixed Request Bodies for Component Upgrades
+
+⚠️ **Note on API Implementation**: The request bodies used during component upgrade initiation are **fixed/hard-coded** and designed to function with our specific use case scenario (nested lab setup). While the VMware Cloud Foundation API provides extensive configuration options for upgrade operations (as documented in the API reference), implementing a complete functionality that would allow users to configure all these parameters from Home Assistant is **not realistic** and **out of scope** for this integration.
+
+The current implementation uses simplified, pre-configured request bodies that cover the most common upgrade scenarios.
+
+### Expected Upgrade Behavior
+
+> **⚠️ Note**: ESX host and cluster upgrade functionality is not yet implemented. The upgrade workflow currently supports SDDC Manager, NSX, and vCenter components. As a result, a VCF upgrade will never succeed in this version of the integration. **It is expected to fail, and this is acknowledged.**
 
 ## Debug Logging
 
@@ -145,6 +159,9 @@ custom_components/datacenter_assistant/
     └── de.json
 ```
 
+## Development Methodology
+
+This integration was developed with a **thorough manual preparation** approach, where the workflow design and conceptual framework were carefully planned and documented as the **most critical foundation** of the development process. The emphasis on comprehensive upfront planning and design thinking demonstrates a methodical approach to software development that prioritizes architectural soundness and conceptual clarity.
 
 ## License
 
