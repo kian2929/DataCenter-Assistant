@@ -2,7 +2,6 @@
 
 [![GitHub Release](https://img.shields.io/github/release/kian2929/DataCenter-Assistant.svg)](https://github.com/kian2929/DataCenter-Assistant/releases)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A custom Home Assistant integration for monitoring and managing VMware Cloud Foundation (VCF) environments. This integration provides comprehensive monitoring of VCF domains, including update status, resource utilization, and automated upgrade workflows.
 
@@ -148,7 +147,3 @@ custom_components/datacenter_assistant/
 ## Development Notes
 
 This integration was implemented with the assistance of AI tools (Claude Sonnet 4 Preview via GitHub Agent mode). The workflow design, conceptual framework, and prompt preparation were thoroughly done manually before implementation, which was the crucial step for the realization of the project.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
