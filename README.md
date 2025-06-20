@@ -102,13 +102,13 @@ Monitor the upgrade process through:
 
 ### Fixed Request Bodies for Component Upgrades
 
-⚠️ **Note on API Implementation**: The request bodies used during component upgrade initiation are **fixed/hard-coded** and designed to function with our specific use case scenario (nested lab setup). While the VMware Cloud Foundation API provides extensive configuration options for upgrade operations (as documented in the API reference), implementing a complete functionality that would allow users to configure all these parameters from Home Assistant is **not realistic** and **out of scope** for this integration.
+⚠️ **Implementation Scope**: The request bodies used during component upgrade initiation are **fixed/hard-coded** and designed to function with our specific use case scenario (nested lab setup). While the VMware Cloud Foundation API provides extensive configuration options for upgrade operations (as documented in the API reference), implementing a complete functionality that would allow users to configure all these parameters from Home Assistant is **not realistic** and **out of scope** for this integration.
 
 The current implementation uses simplified, pre-configured request bodies that cover the most common upgrade scenarios.
 
 ### Expected Upgrade Behavior
 
-> **⚠️ Note**: ESX host and cluster upgrade functionality is not yet implemented. The upgrade workflow currently supports SDDC Manager, NSX, and vCenter components. As a result, a VCF upgrade will never succeed in this version of the integration. **It is expected to fail, and this is acknowledged.**
+⚠️ **Known Limitation**: ESX host and cluster upgrade functionality is not yet implemented. The upgrade workflow currently supports SDDC Manager, NSX, and vCenter components. As a result, a VCF upgrade will never succeed in this version of the integration. **It is expected to fail, and this is acknowledged.**
 
 ## Debug Logging
 
