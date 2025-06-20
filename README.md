@@ -6,7 +6,7 @@
 
 A custom Home Assistant integration for monitoring and managing VMware Cloud Foundation (VCF) environments. This integration provides comprehensive monitoring of VCF domains, including update status, resource utilization, and automated upgrade workflows.
 
-![DataCenter Assistant Logo](logo.png)
+<img src="logo.png" alt="DataCenter Assistant Logo" width="50%">
 
 ## Features
 
