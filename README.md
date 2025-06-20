@@ -104,6 +104,8 @@ The integration provides a complete automated upgrade workflow:
 5. **Component Upgrades**: Sequentially upgrades SDDC Manager, NSX, vCenter, and ESXi
 6. **Final Validation**: Validates successful upgrade completion
 
+> **⚠️ Note**: ESX host and cluster upgrade functionality is not yet implemented. The upgrade workflow currently supports SDDC Manager, NSX, and vCenter components. As a result, a VCF upgrade will never succeed in this version of the integration. **It is expected to fail, and this is acknowledged.**
+
 Monitor the upgrade process through:
 - `sensor.vcf_[domain]_upgrade_status` - Current upgrade step
 - `sensor.vcf_[domain]_upgrade_logs` - Detailed progress logs
