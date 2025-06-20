@@ -227,4 +227,5 @@ class VCFUpdatesAvailableBinarySensor(CoordinatorEntity, BinarySensorEntity):
                 "update_details": domains_with_updates
             }
         except Exception as e:
+            _LOGGER.error(f"Error getting update availability attributes: {e}")
             return {"error": str(e)}

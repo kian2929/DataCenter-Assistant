@@ -27,6 +27,7 @@ def truncate_description(text, max_length=61):
 def version_tuple(version_string):
     """Convert version string to tuple for comparison."""
     if not version_string:
+        _LOGGER.debug("Empty version string provided, returning default (0,0,0,0)")
         return (0, 0, 0, 0)
     
     parts = version_string.split('.')
@@ -35,9 +36,12 @@ def version_tuple(version_string):
         parts.append('0')
     
     try:
-        return tuple(map(int, parts[:4]))
-    except ValueError:
+        result = tuple(map(int, parts[:4]))
+        _LOGGER.debug(f"Converted version '{version_string}' to tuple {result}")
+        return result
+    except ValueError as e:
         # Handle non-numeric version parts
+        _LOGGER.warning(f"Non-numeric version parts in '{version_string}': {e}, returning string tuple")
         return tuple(parts[:4])
 
 def safe_name_conversion(name):
@@ -46,21 +50,36 @@ def safe_name_conversion(name):
 
 async def make_vcf_api_request(session, url, headers, retry_refresh_func=None):
     """Make a VCF API request with automatic token refresh on 401."""
-    async with session.get(url, headers=headers, ssl=False) as resp:
-        if resp.status == 401 and retry_refresh_func:
-            _LOGGER.info("Token expired, refreshing...")
-            new_token = await retry_refresh_func()
-            if new_token:
-                headers["Authorization"] = f"Bearer {new_token}"
-                # Retry with new token
-                async with session.get(url, headers=headers, ssl=False) as retry_resp:
-                    return retry_resp.status, await retry_resp.json() if retry_resp.status == 200 else None
+    _LOGGER.debug(f"Making VCF API request to: {url}")
+    
+    try:
+        async with session.get(url, headers=headers, ssl=False) as resp:
+            if resp.status == 401 and retry_refresh_func:
+                _LOGGER.info("Token expired, refreshing...")
+                new_token = await retry_refresh_func()
+                if new_token:
+                    headers["Authorization"] = f"Bearer {new_token}"
+                    _LOGGER.debug("Retrying request with new token")
+                    # Retry with new token
+                    async with session.get(url, headers=headers, ssl=False) as retry_resp:
+                        if retry_resp.status == 200:
+                            _LOGGER.debug(f"Request successful after token refresh")
+                            return retry_resp.status, await retry_resp.json()
+                        else:
+                            _LOGGER.error(f"Request failed even after token refresh: {retry_resp.status}")
+                            return retry_resp.status, None
+                else:
+                    _LOGGER.error("Failed to refresh token")
+                    raise aiohttp.ClientError("Failed to refresh token")
+            elif resp.status != 200:
+                _LOGGER.error(f"API request failed: {resp.status} for URL: {url}")
+                raise aiohttp.ClientError(f"API request failed: {resp.status}")
             else:
-                raise aiohttp.ClientError("Failed to refresh token")
-        elif resp.status != 200:
-            raise aiohttp.ClientError(f"API request failed: {resp.status}")
-        else:
-            return resp.status, await resp.json()
+                _LOGGER.debug(f"Request successful: {resp.status}")
+                return resp.status, await resp.json()
+    except Exception as e:
+        _LOGGER.error(f"Error making API request to {url}: {e}")
+        raise
 
 def create_base_entity_attributes(domain_id, domain_name, domain_prefix):
     """Create base attributes for all VCF entities."""

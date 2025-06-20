@@ -10,9 +10,13 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
+        _LOGGER.debug("DataCenter Assistant config flow started")
         errors = {}
         
         if user_input is not None:
+            _LOGGER.info("Processing DataCenter Assistant configuration submission")
+            _LOGGER.debug(f"Received config data with URL: {user_input.get('vcf_url', 'NOT_PROVIDED')}")
+            
             # Validate VCF configuration
             required_fields = {
                 "vcf_url": "missing_vcf_url",
@@ -22,11 +26,16 @@ class DataCenterAssistantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
             for field, error_key in required_fields.items():
                 if not user_input.get(field, "").strip():
+                    _LOGGER.warning(f"Missing required field: {field}")
                     errors[field] = error_key
                     break
             
             if not errors:
+                _LOGGER.info("DataCenter Assistant configuration validation successful")
+                _LOGGER.debug(f"Creating config entry for VCF URL: {user_input.get('vcf_url')}")
                 return self.async_create_entry(title="DataCenter Assistant", data=user_input)
+            else:
+                _LOGGER.warning(f"Configuration validation failed with errors: {list(errors.keys())}")
 
         # Show the form with any errors
         return self.async_show_form(

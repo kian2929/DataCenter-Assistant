@@ -25,9 +25,11 @@ class VCFBaseSensor(CoordinatorEntity, SensorEntity):
                 if isinstance(data, dict) and key in data:
                     data = data[key]
                 else:
+                    _LOGGER.debug(f"Key '{key}' not found in coordinator data for {self._attr_name}")
                     return default
             return data
-        except Exception:
+        except Exception as e:
+            _LOGGER.warning(f"Error accessing coordinator data for {self._attr_name}: {e}")
             return default
 
 
@@ -84,8 +86,7 @@ class VCFHostResourceBaseSensor(VCFResourceBaseSensor):
     def __init__(self, coordinator, domain_id, domain_name, domain_prefix, 
                  host_id, hostname, resource_type):
         self._host_id = host_id
-        self._hostname = hostname
-        
+        self._hostname = hostname        
         entity_suffix = f" {hostname}"
         super().__init__(coordinator, domain_id, domain_name, domain_prefix, 
                         resource_type, entity_suffix)
@@ -100,6 +101,7 @@ class VCFHostResourceBaseSensor(VCFResourceBaseSensor):
         try:
             domain_resources = self.safe_get_data("domain_resources", self._domain_id, default={})
             if not domain_resources:
+                _LOGGER.debug(f"No domain resources found for host {self._hostname}")
                 return {}
             
             clusters = domain_resources.get("clusters", [])
@@ -109,8 +111,11 @@ class VCFHostResourceBaseSensor(VCFResourceBaseSensor):
                 for host in hosts:
                     if host.get("id") == self._host_id:
                         return host
+            
+            _LOGGER.debug(f"Host {self._hostname} (ID: {self._host_id}) not found in domain resources")
             return {}
-        except Exception:
+        except Exception as e:
+            _LOGGER.warning(f"Error getting host data for {self._hostname}: {e}")
             return {}
     
     @property
