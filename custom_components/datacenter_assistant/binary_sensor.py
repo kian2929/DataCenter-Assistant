@@ -52,10 +52,50 @@ class VCFConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_unique_id = "vcf_connection"
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_icon = "mdi:server-network"
-
-    @property
-    def is_on(self):
-        """Return True if VCF is connected and domains are available."""
+        
+        # State preservation during expected API outages
+        self._last_known_state = None
+        self._api_outage_active = False
+        
+        # Listen for API outage events
+        self._remove_listeners = []
+    
+    async def async_added_to_hass(self):
+        """Run when sensor is added to Home Assistant."""
+        await super().async_added_to_hass()
+        
+        # Listen for API outage events
+        self._remove_listeners.append(
+            self.hass.bus.async_listen("vcf_api_outage_expected", self._handle_api_outage_expected)
+        )
+        self._remove_listeners.append(
+            self.hass.bus.async_listen("vcf_api_restored", self._handle_api_restored)
+        )
+    
+    async def async_will_remove_from_hass(self):
+        """Run when sensor is removed from Home Assistant."""
+        for remove_listener in self._remove_listeners:
+            remove_listener()
+    
+    def _handle_api_outage_expected(self, event):
+        """Handle notification of expected API outage."""
+        reason = event.data.get("reason", "unknown")
+        if reason == "sddc_manager_upgrade":
+            _LOGGER.info("VCF Connection sensor: Preserving connection state during SDDC Manager upgrade")
+            self._last_known_state = self._get_connection_state()
+            self._api_outage_active = True
+            self.async_schedule_update_ha_state()
+    
+    def _handle_api_restored(self, event):
+        """Handle notification of API restoration."""
+        reason = event.data.get("reason", "unknown")
+        _LOGGER.info(f"VCF Connection sensor: API restored, reason: {reason}")
+        self._api_outage_active = False
+        self._last_known_state = None
+        self.async_schedule_update_ha_state()
+    
+    def _get_connection_state(self):
+        """Get the actual connection state from coordinator data."""
         try:
             if self.coordinator.data is None:
                 return False
@@ -70,19 +110,43 @@ class VCFConnectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
             return False
 
     @property
+    def is_on(self):
+        """Return True if VCF is connected and domains are available."""
+        # During expected API outage, preserve the last known state
+        if self._api_outage_active and self._last_known_state is not None:
+            return self._last_known_state
+        
+        return self._get_connection_state()
+
+    @property
     def extra_state_attributes(self):
         """Return additional attributes."""
         try:
+            attributes = {}
+            
+            # If we're in an API outage, indicate this in attributes
+            if self._api_outage_active:
+                attributes["api_outage_active"] = True
+                attributes["outage_reason"] = "SDDC Manager upgrade in progress"
+                attributes["state_preserved"] = True
+                
+                # If we have last known data, use it
+                if self._last_known_state is not None:
+                    attributes["using_preserved_state"] = True
+                
+                return attributes
+            
             if not self.coordinator.data:
                 return {"error": "No data available"}
                 
             domains = self.coordinator.data.get("domains", [])
             setup_failed = self.coordinator.data.get("setup_failed", False)
             
-            attributes = {
+            attributes.update({
                 "domain_count": len(domains),
                 "setup_failed": setup_failed,
-            }
+                "api_outage_active": False
+            })
             
             # Only add error if there actually is one
             coordinator_error = self.coordinator.data.get("error") if self.coordinator.data else None

@@ -21,6 +21,85 @@ class VCFCoordinatorManager:
         self.vcf_client = VCFAPIClient(hass, config_entry)
         self._domain_cache = {}
         
+        # State preservation for API outages during upgrades
+        self._last_successful_data = None
+        self._last_successful_resource_data = None
+        self._api_outage_start_time = None
+        self._is_sddc_upgrade_in_progress = False
+        self._outage_timeout = 3600  # 1 hour timeout for SDDC Manager upgrades
+        
+        # Set up event listeners for API outage notifications
+        self._setup_api_outage_listeners()
+    
+    def _setup_api_outage_listeners(self):
+        """Set up event listeners for API outage notifications from upgrade service."""
+        self.hass.bus.async_listen("vcf_api_outage_expected", self._handle_api_outage_expected)
+        self.hass.bus.async_listen("vcf_api_restored", self._handle_api_restored)
+    
+    def _handle_api_outage_expected(self, event):
+        """Handle notification of expected API outage."""
+        reason = event.data.get("reason", "unknown")
+        domain_id = event.data.get("domain_id", "unknown")
+        
+        if reason == "sddc_manager_upgrade":
+            _LOGGER.info(f"Received API outage notification for domain {domain_id} due to SDDC Manager upgrade")
+            self._is_sddc_upgrade_in_progress = True
+            self._api_outage_start_time = time.time()
+    
+    def _handle_api_restored(self, event):
+        """Handle notification of API restoration."""
+        reason = event.data.get("reason", "unknown")
+        domain_id = event.data.get("domain_id", "unknown")
+        
+        _LOGGER.info(f"Received API restoration notification for domain {domain_id}, reason: {reason}")
+        self._is_sddc_upgrade_in_progress = False
+        self._api_outage_start_time = None
+    
+    def _is_upgrade_in_progress(self):
+        """Check if any domain has an SDDC Manager upgrade in progress."""
+        try:
+            upgrade_service = self.hass.data.get("datacenter_assistant", {}).get("upgrade_service")
+            if not upgrade_service:
+                return False
+            
+            # Check all domains for SDDC Manager upgrade status
+            for domain_id in upgrade_service._upgrade_states:
+                status = upgrade_service.get_upgrade_status(domain_id)
+                if status == "upgrading_sddcmanager":
+                    return True
+            
+            return False
+        except Exception as e:
+            _LOGGER.debug(f"Error checking upgrade status: {e}")
+            return False
+    
+    def _should_preserve_state(self, error):
+        """Determine if we should preserve the last known state during an API error."""
+        try:
+            # Primary check: Are we in a known SDDC upgrade state via events?
+            if self._is_sddc_upgrade_in_progress and self._api_outage_start_time:
+                # Check if we're within the timeout window
+                if time.time() - self._api_outage_start_time < self._outage_timeout:
+                    return True
+                else:
+                    _LOGGER.warning("API outage timeout exceeded, resuming normal error handling")
+                    self._api_outage_start_time = None
+                    self._is_sddc_upgrade_in_progress = False
+                    return False
+            
+            # Fallback check: Look for SDDC Manager upgrade in progress (less reliable)
+            if self._is_upgrade_in_progress():
+                if self._api_outage_start_time is None:
+                    self._api_outage_start_time = time.time()
+                    _LOGGER.info("SDDC Manager upgrade detected (fallback), preserving last known state during API outage")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            _LOGGER.error(f"Error in state preservation logic: {e}")
+            return False
+    
     async def get_active_domains(self):
         """Get active domains with caching."""
         domains_data = await self.vcf_client.api_request("/v1/domains")
@@ -37,7 +116,7 @@ class VCFCoordinatorManager:
         return domains
     
     async def fetch_upgrades_data(self):
-        """Fetch VCF domain and update information."""
+        """Fetch VCF domain and update information with state preservation during outages."""
         _LOGGER.debug("VCF Coordinator refreshing domain and update data")
         
         if not self.vcf_client.vcf_url:
@@ -57,13 +136,32 @@ class VCFCoordinatorManager:
             # Check for updates
             domain_updates = await self._check_domain_updates(domains)
             
-            return {
+            # Store successful data
+            current_data = {
                 "domains": [domain.to_dict() for domain in domains],
                 "domain_updates": domain_updates
             }
+            self._last_successful_data = current_data
+            
+            # Reset outage tracking on successful fetch
+            if self._api_outage_start_time and not self._is_upgrade_in_progress():
+                _LOGGER.info("API connectivity restored, resuming normal operations")
+                self._api_outage_start_time = None
+                self._is_sddc_upgrade_in_progress = False
+            
+            return current_data
             
         except Exception as e:
             _LOGGER.error(f"Error in VCF update check workflow: {e}")
+            
+            # Check if we should preserve state during expected outage
+            if self._should_preserve_state(e):
+                if self._last_successful_data:
+                    _LOGGER.info("Preserving last known state during SDDC Manager upgrade API outage")
+                    return self._last_successful_data
+                else:
+                    _LOGGER.warning("No previous state to preserve during API outage")
+            
             return {"domains": [], "domain_updates": {}, "error": str(e)}
     
     async def _map_sddc_managers(self, domains):
@@ -119,7 +217,7 @@ class VCFCoordinatorManager:
         return domain_updates
     
     async def fetch_resources_data(self):
-        """Fetch VCF domain resource information."""
+        """Fetch VCF domain resource information with state preservation during outages."""
         _LOGGER.info("VCF Resource Coordinator refreshing resource data")
         
         if not self.vcf_client.vcf_url:
@@ -137,13 +235,31 @@ class VCFCoordinatorManager:
             # Get resource information for each domain
             domain_resources = await self._collect_domain_resources(active_domains)
             
-            return {
+            # Store successful data for potential preservation
+            current_data = {
                 "domains": active_domains,
                 "domain_resources": domain_resources
             }
             
+            # Update last successful data if this is not a preserved state fetch
+            if not hasattr(self, '_last_successful_resource_data'):
+                self._last_successful_resource_data = current_data
+            elif not self._is_sddc_upgrade_in_progress:
+                self._last_successful_resource_data = current_data
+            
+            return current_data
+            
         except Exception as e:
             _LOGGER.error(f"Error in VCF resource collection workflow: {e}")
+            
+            # Check if we should preserve state during expected outage
+            if self._should_preserve_state(e):
+                if hasattr(self, '_last_successful_resource_data') and self._last_successful_resource_data:
+                    _LOGGER.info("Preserving last known resource state during SDDC Manager upgrade API outage")
+                    return self._last_successful_resource_data
+                else:
+                    _LOGGER.warning("No previous resource state to preserve during API outage")
+            
             return {"domains": [], "domain_resources": {}, "error": str(e)}
     
     def _extract_active_domains(self, domains_data):
